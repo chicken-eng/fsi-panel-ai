@@ -29,6 +29,28 @@ def get_llm():
         temperature=0
     )
 
+SEMANTIC_GLOSSARY = """
+SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
+1. RESPONDENT TYPES (Filter via respondent_type_specification and respondent_type tables):
+   - "Consumer" -> respondent_type.type_name = 'Consumer'
+   - "HCP" or "Healthcare Professional" -> respondent_type.type_name = 'HCP'
+   - "Patient/Caregiver" -> respondent_type.type_name = 'Patient/Caregiver'
+   - "B2B" or "Business Respondent" -> respondent_type.type_name = 'B2B'
+
+2. CALCULATING AGE:
+   - "Age" or "Ages between X and Y" is NEVER a column. You must ALWAYS calculate it dynamically from r.date_of_birth using PostgreSQL AGE function.
+   - Example for age 20-45: EXTRACT(YEAR FROM AGE(NOW(), r.date_of_birth)) BETWEEN 20 AND 45
+
+3. HEALTHCARE PROFFESIONALS
+   - Terms like "Physician", "Nurse", "Surgeon", "Pharmacist", "Technician", "Dentist", "Midwife", "Admin", "Manager", "Student", "Research/Laboratory", "Retired",
+   are all HCP job titles (Filter via respondent_hcp_job_title and hcp_job_title tables). Any other values mentioned during a HCP search e.g. 'Oncology' is a specialty and must be filtered through respondent_hcp_specialty and hcp_job_specialty tables. 
+
+4. DATES
+   - When asked about when a respondent was created, made, first appeared etc filter using created_date from respondent_type_specification table. You will find multiple create_dates if respondents are on different panel in this case take the oldest date.
+   - When asked about when a respondent was last active filter via update_date from respondent_type_specification table. You will find multiple update_dates if respondents are on different panels in this case take the newest date.
+   - When asked about when a respondent was last active in relation to a project filter via last_activity_date from project_respondent table.
+"""
+
 @st.cache_resource
 def get_schema_description() -> str:
     """
