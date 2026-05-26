@@ -352,6 +352,7 @@ Before writing the query, you MUST think through the problem step-by-step. Use t
 2. Identify all filters and constraints requested by the user (e.g., age limits, gender, dates, respondent types).
 3. Map those human terms to the exact database values using the SEMANTIC TRANSLATION GLOSSARY.
 4. Plan the necessary JOINs.
+5. Determine the output format: If the user asks "how many" or the question is a conversational follow-up to a previous COUNT, you MUST use COUNT. If they ask "who" or "show me", use a LIST.
 
 **SQL:**
 After your reasoning, provide the final, highly optimized PostgreSQL query enclosed strictly within ```sql and ``` markdown tags. Do not explain the SQL after writing it.
@@ -519,9 +520,12 @@ A user asked: "{question}"
 The generated SQL is:
 {sql}
 
-Check if the SQL applies EVERY filter and condition requested in the user's question (e.g., age ranges, gender, specific geographic locations, respondent types).
-- If the SQL accurately reflects all constraints in the question, reply EXACTLY with: VALID
-- If the SQL is missing parameters, reply ONLY with a brief description of what is missing. Example: "Missing filter for ages 20-45 and female gender."
+Perform these two checks:
+1. Filters: Does the SQL apply EVERY filter and condition requested in the user's question (e.g., age ranges, gender, respondent types)?
+2. Output Format: Does the SQL use the correct aggregation? If the user asks "how many" or the question implies a count, the SQL MUST use COUNT(). If they ask for a list, it MUST select email, first_name, last_name.
+
+- If the SQL accurately reflects all constraints AND the correct output format, reply EXACTLY with: VALID
+- If the SQL is missing parameters or uses the wrong output format (e.g., returning a list when a count is expected), reply ONLY with a brief description of what is wrong. Example: "Missing filter for ages 20-45" or "Should be a COUNT() query, not a SELECT list."
 """
 )
 
