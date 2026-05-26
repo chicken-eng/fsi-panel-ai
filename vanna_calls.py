@@ -746,7 +746,7 @@ def generate_sql(question: str, history: str = "") -> str | None:
     chain = SQL_PROMPT | llm
 
     try:
-    """Generates SQL using CoT reasoning and extracts the executable query."""    
+     """Generates SQL using CoT reasoning and extracts the executable query."""    
        raw_response = chain.invoke({
             "schema": get_schema_description(),
             "history": history,
