@@ -364,7 +364,7 @@ MessagesPlaceholder(variable_name="history"),
 # ----------------------------
 # Response format prompt
 # ----------------------------
-RESPONSE_PROMPT = PromptTemplate(
+RESPONSE_PROMPT = ChatPromptTemplate(
     input_variables=["question", "data"],
     template="""
 You are a data analyst reporting internal database results to a colleague.
