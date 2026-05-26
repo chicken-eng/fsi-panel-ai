@@ -737,7 +737,7 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
     return sql, df
 
 
-def generate_sql(question: str, history: str = "") -> str | None:
+def generate_sql(question: str, history: list = None) -> str | None:
     """Generates SQL using CoT reasoning and structured chat history."""
     if history is None:
         history = []
@@ -745,8 +745,7 @@ def generate_sql(question: str, history: str = "") -> str | None:
     llm = get_llm()
     chain = SQL_PROMPT | llm
 
-    try:
-     """Generates SQL using CoT reasoning and extracts the executable query."""    
+    try:  
         raw_response = chain.invoke({
             "schema": get_schema_description(),
             "history": history,
