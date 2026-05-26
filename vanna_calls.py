@@ -747,7 +747,7 @@ def generate_sql(question: str, history: str = "") -> str | None:
 
     try:
      """Generates SQL using CoT reasoning and extracts the executable query."""    
-       raw_response = chain.invoke({
+        raw_response = chain.invoke({
             "schema": get_schema_description(),
             "history": history,
             "question": question
