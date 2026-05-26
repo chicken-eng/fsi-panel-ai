@@ -1,6 +1,7 @@
 import time
 import uuid
 import streamlit as st
+from langchain_core.messages import HumanMessage, AIMessage
 from vanna_calls import (
     generate_questions_cached,
     generate_sql_cached,
@@ -13,14 +14,14 @@ from vanna_calls import (
     generate_summary_cached
 )
 
-def build_history_string(messages: list, max_turns: int = 3) -> str:
+def build_history_messages(messages: list, max_turns: int = 3) -> list:
     """
     Builds conversation context from the last N turns.
     Skips history if the current question appears to be a topic shift
     (i.e. doesn't reference pronouns or connective words).
     """
     if not messages:
-        return ""
+        return []
 
     # Connective words that signal the user is continuing a prior thread
     continuation_signals = [
@@ -40,7 +41,7 @@ def build_history_string(messages: list, max_turns: int = 3) -> str:
     
     # If no continuation signal, this looks like a fresh topic — skip history
     if not is_continuation:
-        return ""
+        return []
         
     pairs = []
     i = len(messages) - 1
@@ -54,15 +55,21 @@ def build_history_string(messages: list, max_turns: int = 3) -> str:
             i -= 1
     
     if not pairs:
-        return ""
+        return []
     
-    lines = ["The following is the recent conversation history for context:"]
+    # Build structured LangChain message objects
+    langchain_messages = []
     for q, sql in reversed(pairs):
-        lines.append(f"User asked: {q}")
+        # 1. Add the human's past question
+        langchain_messages.append(HumanMessage(content=q))
+        
+        # 2. Add the AI's past SQL response
         if sql:
-            lines.append(f"SQL used: {sql}")
-    lines.append("")  # blank line before new question
-    return "\n".join(lines)
+            # We wrap the SQL in markdown tags so it identically matches 
+            # the format the Llama 3 model is instructed to output.
+            langchain_messages.append(AIMessage(content=f"```sql\n{sql}\n```"))
+            
+    return langchain_messages
 
 @st.cache_data
 def convert_df_to_csv(df):
@@ -159,9 +166,8 @@ if my_question:
         # We'll build a dictionary to save this turn's data to history
         turn_data = {"role": "assistant"}
 
-        history_str = build_history_string(st.session_state["messages"][:-1])
-
-        sql, df = generate_sql_cached(question=my_question, history=history_str)
+        history_msgs = build_history_messages(st.session_state["messages"][:-1])
+        sql, df = generate_sql_cached(question=my_question, history=history_msgs)
         
         if sql and is_sql_valid_cached(sql=sql):
             turn_data["sql"] = sql
