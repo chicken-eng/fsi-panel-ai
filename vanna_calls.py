@@ -502,8 +502,46 @@ def get_real_columns_for_sql(sql: str) -> str:
     
     return "\n".join(lines)
 
+VALIDATION_PROMPT = PromptTemplate(
+    input_variables=["question", "sql"],
+    template="""
+You are a strict SQL code reviewer for a market research database.
+A user asked: "{question}"
+The generated SQL is:
+{sql}
+
+Check if the SQL applies EVERY filter and condition requested in the user's question (e.g., age ranges, gender, specific geographic locations, respondent types).
+- If the SQL accurately reflects all constraints in the question, reply EXACTLY with: VALID
+- If the SQL is missing parameters, reply ONLY with a brief description of what is missing. Example: "Missing filter for ages 20-45 and female gender."
+"""
+)
+
+REWRITE_PROMPT = PromptTemplate(
+    input_variables=["schema", "history", "question", "bad_sql", "missing_logic"],
+    template="""
+{schema}
+
+{history}
+You previously generated this SQL query to answer the question "{question}":
+{bad_sql}
+
+HOWEVER, a code reviewer rejected this SQL for the following reason:
+{missing_logic}
+
+Rewrite the SQL query so that it properly includes the missing logic. 
+Return ONLY the SQL query with no explanation, no markdown, no code fences.
+"""
+)
+
+def validate_sql_intent(question: str, sql: str) -> str:
+    """Checks if the generated SQL dropped any user parameters."""
+    llm = get_llm()
+    chain = VALIDATION_PROMPT | llm
+    result = chain.invoke({"question": question, "sql": sql}).content.strip()
+    return result
+
 def generate_sql_with_retry(question: str, history: str = "") -> tuple[str | None, pd.DataFrame | None]:
-    """Generates SQL, runs it, and if empty retries with real column values."""
+    """Generates SQL, validates intent, runs it, and handles DB retries."""
     
     with st.expander("🔍 Query Process", expanded=True):
         # Step 1
@@ -515,6 +553,29 @@ def generate_sql_with_retry(question: str, history: str = "") -> tuple[str | Non
             return None
         
         st.code(sql, language="sql")
+
+        # Step 1.5: Validate Intent (The New Critic Step)
+        st.markdown("**Step 2: Validating Query Intent...**")
+        validation_result = validate_sql_intent(question, sql)
+        
+        if validation_result != "VALID":
+            st.warning(f"⚠️ Code Reviewer flagged an issue: {validation_result}")
+            st.markdown("**Step 2.5: Rewriting SQL to include missing parameters...**")
+            
+            # Run the targeted rewrite
+            llm = get_llm()
+            chain = REWRITE_PROMPT | llm
+            sql = chain.invoke({
+                "schema": get_schema_description(),
+                "history": history,
+                "question": question,
+                "bad_sql": sql,
+                "missing_logic": validation_result
+            }).content.strip()
+            
+            st.code(sql, language="sql")
+        else:
+            st.info("✅ Query passed intent validation.")
         
         # Step 2
         st.markdown("**Step 2: Running query...**")
