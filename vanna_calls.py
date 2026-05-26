@@ -5,6 +5,7 @@ from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableSequence
 import time
+import re
 
 # ----------------------------
 # Database connection
@@ -343,11 +344,19 @@ SQL_PROMPT = PromptTemplate(
 {schema}
 
 {history}
-Given the database schema and rules above, write a PostgreSQL SQL query to answer this question:
-{question}
+You are an expert PostgreSQL database engineer for a market research firm. 
+A user asked: "{question}"
 
-Return ONLY the SQL query with no explanation, no markdown, no code fences.
-If the question cannot be answered with SQL, return the word: UNSUPPORTED
+Before writing the query, you MUST think through the problem step-by-step. Use this exact format:
+
+**Reasoning:**
+1. Identify the specific tables needed to answer the question.
+2. Identify all filters and constraints requested by the user (e.g., age limits, gender, dates, respondent types).
+3. Map those human terms to the exact database values using the SEMANTIC TRANSLATION GLOSSARY.
+4. Plan the necessary JOINs.
+
+**SQL:**
+After your reasoning, provide the final, highly optimized PostgreSQL query enclosed strictly within ```sql and ``` markdown tags. Do not explain the SQL after writing it.
 """
 )
 
@@ -533,6 +542,25 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
 """
 )
 
+def extract_sql_from_cot(llm_response: str) -> str:
+    """
+    Extracts the SQL query from the LLM's response, ignoring the reasoning.
+    Looks specifically for markdown SQL blocks.
+    """
+    # Primary match: look for ```sql [query] ```
+    match = re.search(r"```sql\n(.*?)\n```", llm_response, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    
+    # Fallback match: in case the LLM forgets the 'sql' tag and just uses ```
+    match_fallback = re.search(r"```(.*?)```", llm_response, re.DOTALL)
+    if match_fallback:
+        return match_fallback.group(1).strip()
+        
+    # Failsafe: If no markdown is found, return the raw response 
+    # (Though with our prompt, this should rarely happen)
+    return llm_response.strip()
+
 def validate_sql_intent(question: str, sql: str) -> str:
     """Checks if the generated SQL dropped any user parameters."""
     llm = get_llm()
@@ -704,13 +732,26 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
 
 
 def generate_sql(question: str, history: str = "") -> str | None:
+    """Generates SQL using CoT reasoning and extracts the executable query."""
     llm = get_llm()
     chain = SQL_PROMPT | llm
-    result = chain.invoke({"schema": get_schema_description(), "history": history, "question": question}).content
-    result = result.strip()
-    if result == "UNSUPPORTED" or not result.lower().startswith("select"):
+
+    try:
+    """Generates SQL using CoT reasoning and extracts the executable query."""    
+       raw_response = chain.invoke({
+            "schema": get_schema_description(),
+            "history": history,
+            "question": question
+        }).content
+        
+        # Strip out the reasoning, leaving only the executable SQL
+        clean_sql = extract_sql_from_cot(raw_response)
+        
+        return clean_sql
+        
+    except Exception as e:
+        st.error(f"Error generating SQL: {e}")
         return None
-    return result
 
 def generate_response(question: str, df: pd.DataFrame) -> str | None:
     llm = get_llm()
