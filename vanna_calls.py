@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
 from langchain_groq import ChatGroq
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import RunnableSequence
 import time
 import re
@@ -338,14 +339,11 @@ Use only date columns explicitly listed in the schema.
 # ----------------------------
 # SQL generation prompt
 # ----------------------------
-SQL_PROMPT = PromptTemplate(
-    input_variables=["schema", "history", "question"],
-    template="""
+SQL_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """
 {schema}
 
-{history}
 You are an expert PostgreSQL database engineer for a market research firm. 
-A user asked: "{question}"
 
 Before writing the query, you MUST think through the problem step-by-step. Use this exact format:
 
@@ -357,8 +355,10 @@ Before writing the query, you MUST think through the problem step-by-step. Use t
 
 **SQL:**
 After your reasoning, provide the final, highly optimized PostgreSQL query enclosed strictly within ```sql and ``` markdown tags. Do not explain the SQL after writing it.
-"""
-)
+"""),
+MessagesPlaceholder(variable_name="history"),
+    ("human", "{question}")
+])
 
 # ----------------------------
 # Response format prompt
@@ -570,6 +570,8 @@ def validate_sql_intent(question: str, sql: str) -> str:
 
 def generate_sql_with_retry(question: str, history: str = "") -> tuple[str | None, pd.DataFrame | None]:
     """Generates SQL, validates intent, runs it, and handles DB retries."""
+    if history is None:
+        history = []
     
     with st.expander("🔍 Query Process", expanded=True):
         # Step 1
@@ -732,7 +734,10 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
 
 
 def generate_sql(question: str, history: str = "") -> str | None:
-    """Generates SQL using CoT reasoning and extracts the executable query."""
+    """Generates SQL using CoT reasoning and structured chat history."""
+    if history is None:
+        history = []
+    
     llm = get_llm()
     chain = SQL_PROMPT | llm
 
@@ -746,7 +751,6 @@ def generate_sql(question: str, history: str = "") -> str | None:
         
         # Strip out the reasoning, leaving only the executable SQL
         clean_sql = extract_sql_from_cot(raw_response)
-        
         return clean_sql
         
     except Exception as e:
@@ -773,7 +777,7 @@ def generate_questions_cached():
         "How many respondents have unsubscribed?",
     ]
 
-def generate_sql_cached(question: str, history: str = ""):
+def generate_sql_cached(question: str, history: list = None):
     return generate_sql_with_retry(question, history=history)
 
 @st.cache_data(show_spinner="Checking for valid SQL ...")
