@@ -585,7 +585,12 @@ def generate_sql_with_retry(question: str, history: str = "") -> tuple[str | Non
         
         if not sql:
             st.error("Could not generate a valid SQL query.")
-            return None
+            return None, None
+            
+        if not sql.lower().startswith("select"):
+            st.info("No database query required for this message.")
+            # We return the conversational text as 'sql', but df as None.
+            return sql, None
         
         st.code(sql, language="sql")
 
