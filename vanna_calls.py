@@ -52,6 +52,9 @@ SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
    - When asked about when a respondent was created, made, first appeared etc filter using created_date from respondent_type_specification table. You will find multiple create_dates if respondent has different types, in this case take the oldest date.
    - When asked about when a respondent was last active filter via update_date from respondent_type_specification table. You will find multiple update_dates if respondent has different types, in this case take the newest date.
    - When asked about when a respondent was last active in relation to a project filter via last_activity_date from project_respondent table.
+
+5. PROJECTS
+   - Words like participate, took part, applied, will be used in relation to projects. When asked such question filter via project_respondent and projects tables.
 """
 
 @st.cache_resource
