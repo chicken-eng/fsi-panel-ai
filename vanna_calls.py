@@ -55,6 +55,7 @@ SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
 
 5. PROJECTS
    - Words like participate, took part, applied, will be used in relation to projects. When asked such question filter via project_respondent and projects tables.
+   - If the question about a project requires a date or date range use the last_activity_date to filter.
 """
 
 @st.cache_resource
