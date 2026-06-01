@@ -535,9 +535,9 @@ Perform these two checks:
 )
 
 REWRITE_PROMPT = PromptTemplate(
-    input_variables=["schema", "history", "question", "bad_sql", "missing_logic"],
+    input_variables=["rules", "history", "question", "bad_sql", "missing_logic"],
     template="""
-{schema}
+{rules}
 
 {history}
 You previously generated this SQL query to answer the question "{question}":
@@ -610,7 +610,7 @@ def generate_sql_with_retry(question: str, history: str = "") -> tuple[str | Non
             llm = get_llm()
             chain = REWRITE_PROMPT | llm
             sql = chain.invoke({
-                "schema": get_schema_description(),
+                "rules": f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}",
                 "history": history,
                 "question": question,
                 "bad_sql": sql,
@@ -643,9 +643,9 @@ def generate_sql_with_retry(question: str, history: str = "") -> tuple[str | Non
                 if real_columns:
                     llm = get_llm()
                     retry_prompt = PromptTemplate(
-                        input_variables=["schema", "history", "question", "bad_sql", "real_columns", "error"],
+                        input_variables=["rules", "history", "question", "bad_sql", "real_columns", "error"],
                         template="""
-{schema}
+{rules}
 
 {history}
 You previously generated this SQL query:
@@ -666,7 +666,7 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                 )
                 chain = retry_prompt | llm
                 sql = chain.invoke({
-                    "schema": get_schema_description(),
+                    "rules": f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}",
                     "history": history,
                     "question": question,
                     "bad_sql": sql,
@@ -704,9 +704,9 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                     
                     llm = get_llm()
                     retry_prompt = PromptTemplate(
-                        input_variables=["schema", "history", "question", "bad_sql", "samples"],
+                        input_variables=["rules", "history", "question", "bad_sql", "samples"],
                         template="""
-{schema}
+{rules}
 
 {history}
 You previously generated this SQL query:
@@ -723,7 +723,7 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                     )
                     chain = retry_prompt | llm
                     sql = chain.invoke({
-                        "schema": get_schema_description(),
+                        "rules": f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}",
                         "history": history,
                         "question": question,
                         "bad_sql": sql,
