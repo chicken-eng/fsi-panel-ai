@@ -150,8 +150,7 @@ def get_schema_description() -> str:
             
             # 4. Build a compact schema string
             schema_lines = [
-                "You are a data analyst assistant for a market research and panel management company.",
-                "The PostgreSQL database contains the following tables:\n",
+                "We have a PostgreSQL database that contains the following tables:\n",
                 "COLUMN INVENTORY (use these exact column names — do not invent columns):\n"
             ]
 
@@ -202,7 +201,6 @@ CRITICAL RULES YOU MUST ALWAYS FOLLOW:
 3. Always use lowercase table and column names.
 4. Use PostgreSQL syntax only.
 5. DISREGARD is_deleted and is_active columns from respondent and respondent_type_specification tables in your queries unless specified in the question.
-7. When you run a SQL query that returns data, DO NOT generate a Markdown table of the results in your text response. 
    The user interface will automatically display the data. Your text response should only be a brief summary of what you found, never the raw rows themselves.
 8. Several columns in the database are PostgreSQL enum types, not plain text. 
    These include but are not limited to: country, uk_region, county_state, gender, 
@@ -309,6 +307,19 @@ SQL_PROMPT = ChatPromptTemplate.from_messages([
 {schema}
 
 You are an expert PostgreSQL database engineer for a market research firm. 
+Provide the highly optimized PostgreSQL query to answer the user's question.
+Return ONLY the final SQL query enclosed strictly within ```sql and ``` markdown tags. 
+Do not explain the SQL or provide any step-by-step reasoning.
+"""),
+MessagesPlaceholder(variable_name="history"),
+    ("human", "{question}")
+])
+
+COMPLEX_SQL_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """
+{schema}
+
+You are an expert PostgreSQL database engineer for a market research firm. 
 
 Before writing the query, you MUST think through the problem step-by-step. Use this exact format:
 
@@ -322,7 +333,7 @@ Before writing the query, you MUST think through the problem step-by-step. Use t
 **SQL:**
 After your reasoning, provide the final, highly optimized PostgreSQL query enclosed strictly within ```sql and ``` markdown tags. Do not explain the SQL after writing it.
 """),
-MessagesPlaceholder(variable_name="history"),
+    MessagesPlaceholder(variable_name="history"),
     ("human", "{question}")
 ])
 
@@ -342,7 +353,7 @@ Rules:
 - Report ONLY what the data shows. Never compare to external benchmarks or real world statistics.
 - If the result is a single value, respond in one short sentence stating just the number.
 - Do not add commentary, caveats, or explanations unless the data is empty.
-- When you run a SQL query that returns data, DO NOT generate a Markdown table of the results in your text response.
+- When you run a SQL query that returns data, DO NOT generate a Markdown table of the results in your text response. Reply with one sentence only. No tables, no lists.
   The user interface will automatically display the data. Your text response should only be a brief summary of what you found, never the raw rows themselves.
 - If no data was returned, say: "No results were found for that question."
 """
@@ -494,13 +505,11 @@ Perform these two checks:
 """
 )
 
-REWRITE_PROMPT = PromptTemplate(
-    input_variables=["rules", "history", "question", "bad_sql", "missing_logic"],
-    template="""
+REWRITE_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """
 {rules}
 
-{history}
-You previously generated this SQL query to answer the question "{question}":
+You previously generated this SQL query:
 {bad_sql}
 
 HOWEVER, a code reviewer rejected this SQL for the following reason:
@@ -508,8 +517,10 @@ HOWEVER, a code reviewer rejected this SQL for the following reason:
 
 Rewrite the SQL query so that it properly includes the missing logic. 
 Return ONLY the SQL query with no explanation, no markdown, no code fences.
-"""
-)
+"""),
+    MessagesPlaceholder(variable_name="history"),
+    ("human", "{question}")
+])
 
 def extract_sql_from_cot(llm_response: str) -> str:
     """
@@ -602,12 +613,10 @@ def generate_sql_with_retry(question: str, history: str = "") -> tuple[str | Non
 
                 if real_columns:
                     llm = get_llm()
-                    retry_prompt = PromptTemplate(
-                        input_variables=["rules", "history", "question", "bad_sql", "real_columns", "error"],
-                        template="""
+                    retry_prompt = ChatPromptTemplate.from_messages([
+                        ("system", """
 {rules}
 
-{history}
 You previously generated this SQL query:
 {bad_sql}
 
@@ -618,12 +627,12 @@ Here are the ACTUAL columns that exist on the tables used in your query:
 {real_columns}
 
 IMPORTANT: Only use column names from the list above. Do not invent or assume any column names.
-Rewrite the SQL query to answer this question using only the real columns listed:
-{question}
-
+Rewrite the SQL query using only the real columns listed.
 Return ONLY the SQL query with no explanation, no markdown, no code fences.
-"""
-                )
+"""),
+                        MessagesPlaceholder(variable_name="history"),
+                        ("human", "{question}")
+                    ])
                 chain = retry_prompt | llm
                 sql = chain.invoke({
                     "rules": f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}",
@@ -663,24 +672,22 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                     st.markdown("**Step 4: Retrying with correct values...**")
                     
                     llm = get_llm()
-                    retry_prompt = PromptTemplate(
-                        input_variables=["rules", "history", "question", "bad_sql", "samples"],
-                        template="""
+                    retry_prompt = ChatPromptTemplate.from_messages([
+                        ("system", """
 {rules}
 
-{history}
 You previously generated this SQL query:
 {bad_sql}
 
 It returned zero results. Here are the actual distinct values stored in the relevant columns:
 {samples}
 
-Using these exact values, rewrite the SQL query to answer this question:
-{question}
-
+Using these exact values, rewrite the SQL query.
 Return ONLY the SQL query with no explanation, no markdown, no code fences.
-"""
-                    )
+"""),
+                        MessagesPlaceholder(variable_name="history"),
+                        ("human", "{question}")
+                    ])
                     chain = retry_prompt | llm
                     sql = chain.invoke({
                         "rules": f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}",
@@ -706,6 +713,29 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
     
     return sql, df
 
+def is_complex_query(question: str) -> bool:
+    """
+    Evaluates the user's question to determine if it requires Chain-of-Thought reasoning.
+    Zero-token heuristic based on word count and complexity keywords.
+    """
+    q_lower = question.lower()
+    
+    # Keywords that imply multi-table joins, date filtering, or complex aggregations
+    complexity_indicators = [
+        "between", "average", "ratio", "compare", "trend", "month", "year",
+        "both", "multiple", "except", "without", "versus", "vs", "most", 
+        "least", "top", "bottom", "percentage", "group by"
+    ]
+    
+    # Route to CoT if the question is heavily constrained (long)
+    if len(q_lower.split()) > 15:
+        return True
+        
+    # Route to CoT if it hits any complexity keywords
+    if any(word in q_lower for word in complexity_indicators):
+        return True
+        
+    return False
 
 def generate_sql(question: str, history: list = None) -> str | None:
     """Generates SQL using CoT reasoning and structured chat history."""
@@ -713,7 +743,13 @@ def generate_sql(question: str, history: list = None) -> str | None:
         history = []
     
     llm = get_llm()
-    chain = SQL_PROMPT | llm
+    
+    # 1. Evaluate complexity
+    requires_cot = is_complex_query(question)
+    
+    # 2. Route to the correct prompt
+    prompt_template = COMPLEX_SQL_PROMPT if requires_cot else SIMPLE_SQL_PROMPT
+    chain = prompt_template | llm
 
     try:  
         raw_response = chain.invoke({
