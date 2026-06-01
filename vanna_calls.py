@@ -44,7 +44,7 @@ SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
    - "Age" or "Ages between X and Y" is NEVER a column. You must ALWAYS calculate it dynamically from r.date_of_birth using PostgreSQL AGE function.
    - Example for age 20-45: EXTRACT(YEAR FROM AGE(NOW(), r.date_of_birth)) BETWEEN 20 AND 45
 
-3. HEALTHCARE PROFFESIONALS
+3. HEALTHCARE PROFESSIONALS
    - Terms like "Physician", "Nurse", "Surgeon", "Pharmacist", "Technician", "Dentist", "Midwife", "Admin", "Manager", "Student", "Research/Laboratory", "Retired",
    are all HCP job titles (Filter via respondent_hcp_job_title and hcp_job_title tables). Any other values mentioned during a HCP search e.g. 'Oncology' is a specialty and must be filtered through respondent_hcp_specialty and hcp_job_specialty tables. 
 
@@ -60,13 +60,10 @@ SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
 
 @st.cache_resource
 def get_schema_description() -> str:
-    """
-    Pulls live schema from the database and formats it for the LLM"""
+    """Pulls live schema from the database and formats it for the LLM."""
     engine = get_engine()
-    
     try:
         with engine.connect() as conn:
-            # 1. Get all tables in public schema
             tables_result = conn.execute(text("""
                 SELECT table_name 
                 FROM information_schema.tables 
@@ -81,7 +78,6 @@ def get_schema_description() -> str:
             """))
             tables = [row[0] for row in tables_result]
             
-            # 2. Get columns + constraints for each table
             cols_result = conn.execute(text("""
                 SELECT 
                     cols.table_name,
@@ -102,11 +98,9 @@ def get_schema_description() -> str:
                 ORDER BY cols.table_name, cols.ordinal_position
             """), {"tables": tables})
             
-            # 3. Group columns by table
             table_cols = defaultdict(list)
             for row in cols_result:
                 table_name, col_name, data_type, nullable, constraint = row
-                # Format nicely: email (varchar, PK), first_name (varchar)
                 col_str = f"{col_name} ({data_type}"
                 if constraint == 'PRIMARY KEY':
                     col_str += ", PK"
@@ -117,7 +111,6 @@ def get_schema_description() -> str:
                 col_str += ")"
                 table_cols[table_name].append(col_str)
 
-              # 3. Get foreign key relationships
             fk_result = conn.execute(text("""
                 SELECT
                     kcu.table_name AS from_table,
@@ -140,11 +133,8 @@ def get_schema_description() -> str:
             relationships = defaultdict(list)
             for row in fk_result:
                 from_table, from_col, to_table, to_col = row
-                relationships[from_table].append(
-                    f"{from_col} → {to_table}.{to_col}"
-                )
+                relationships[from_table].append(f"{from_col} → {to_table}.{to_col}")
             
-            # 4. Build a compact schema string
             schema_lines = [
                 "We have a PostgreSQL database that contains the following tables:\n",
                 "COLUMN INVENTORY (use these exact column names — do not invent columns):\n"
@@ -168,15 +158,8 @@ def get_schema_description() -> str:
             return "\n".join(schema_lines)
             
     except Exception as e:
-        # Fall back to static description if DB is unreachable
         st.warning(f"Could not load live schema, using static fallback: {e}")
-        
-        fallback_lines = [
-            STATIC_SCHEMA_FALLBACK,
-            SEMANTIC_GLOSSARY,
-            "",
-            BUSINESS_CONTEXT
-        ]
+        fallback_lines = [STATIC_SCHEMA_FALLBACK, SEMANTIC_GLOSSARY, "", BUSINESS_CONTEXT]
         return "\n".join(fallback_lines)
         
 # ----------------------------
@@ -234,71 +217,37 @@ Use only date columns explicitly listed in the schema.
 STATIC_SCHEMA_FALLBACK = """
 You are a data analyst assistant for a market research and panel management company.
 The PostgreSQL database contains the following key tables:
-
-- respondent: Core table of panel members. Fields include email (PK), first_name, last_name, 
-  date_of_birth, phone_number, gender, ethnicity, is_deleted, ip_address.
-
-- addresses: Respondent address info linked by email. Fields include country, uk_region, 
-  county_state, city, postal_code.
-
-- respondent_type_specification: What type a respondent is (consumer, HCP, patient, B2B etc), 
-  linked by email and type_id. Includes is_active, respondent_tier.
-
+- respondent: Core table of panel members. Fields include email (PK), first_name, last_name, date_of_birth, phone_number, gender, ethnicity, is_deleted, ip_address.
+- addresses: Respondent address info linked by email. Fields include country, uk_region, county_state, city, postal_code.
+- respondent_type_specification: What type a respondent is linked by email and type_id.
 - respondent_type: Lookup table for type names (type_id, type_name).
-
 - conditions: Medical conditions lookup (condition_id, condition).
-
-- respondent_condition_specification: Links respondents to their conditions via email and 
-  condition_id. Includes professionally_diagnosed flag.
-
+- respondent_condition_specification: Links respondents to conditions.
 - hcp_job_title: Lookup for HCP job titles.
 - hcp_job_specialty: Lookup for HCP specialties.
 - hcp_level_of_expertise: Lookup for HCP expertise levels.
 - respondent_hcp_job_title: Links respondents to HCP job titles.
-- respondent_hcp_specialty: Links respondents to HCP specialties, includes hcp_number, 
-  hcp_sub_specialty.
+- respondent_hcp_specialty: Links respondents to HCP specialties.
 - respondent_hcp_level_of_expertise: Links respondents to expertise levels.
-
-- socio_economic: Socio-economic profile per respondent linked by email. Fields include 
-  job_status, current_job_title, job_title_tier, industry, highest_education_level, 
-  annual_household_income.
-
-- household: Household info per respondent linked by email. Fields include relationship, 
-  children, number_of_children.
-
-- clients: Client companies (client_id, client_name, created_date).
-
-- projects: Research projects (project_number PK, project_name, client_id, topic, 
-  project_type, project_state, created_date, end_date).
-
-- project_respondent: Links respondents to projects via email and project_number. 
-  Includes incentive, currency, interaction_level, last_activity_date.
-
-- survey_response: Survey answers per respondent per project. Fields include email, 
-  project_number, survey_question, survey_answer.
-
+- socio_economic: Socio-economic profile per respondent linked by email.
+- household: Household info per respondent linked by email.
+- clients: Client companies (client_id, client_name).
+- projects: Research projects (project_number PK, project_name, client_id, topic, project_type, project_state).
+- project_respondent: Links respondents to projects via email.
+- survey_response: Survey answers per respondent per project.
 - mailings: Email campaigns (mailing_id, mailing_name).
-
-- messages: Individual emails sent (system_message_id PK, mailing_id, subject, from_email).
-
-- delivery_logs: Delivery status per message per recipient. Fields include system_message_id, 
-  recipient_email, status, status_date, failure_type, failure_code, reason.
-
-- engagement: Email engagement per message. Fields include system_message_id, first_open, 
-  last_open, open_count, first_click, last_click, click_count, last_event_type.
-
+- messages: Individual emails sent (system_message_id PK).
+- delivery_logs: Delivery status per message per recipient.
+- engagement: Email engagement metrics per message.
 - mx_records: MX provider info per domain.
-
-- company_profile: B2B respondent company info linked by email. Fields include company_name, 
-  company_size, company_turnover, years_in_business, industry, approximate_salary_bracket.
-
-- providers / servers: Email sending infrastructure lookup tables.
+- company_profile: B2B respondent company info linked by email.
 """
 
 # ----------------------------
 # Prompt templates
 # ----------------------------
 
+# Core Engine for Multi-Turn Intent Stabilization
 CONTEXTUALIZE_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """
 You are an expert conversational context manager. Your sole job is to review a chat history between a data analyst and a user, look at the latest follow-up statement, and combine them into a single, self-contained, completely unambiguous question.
@@ -321,7 +270,7 @@ Provide the highly optimized PostgreSQL query to answer the user's question.
 Return ONLY the final SQL query enclosed strictly within ```sql and ``` markdown tags. 
 Do not explain the SQL or provide any step-by-step reasoning.
 """),
-MessagesPlaceholder(variable_name="history"),
+    MessagesPlaceholder(variable_name="history"),
     ("human", "{question}")
 ])
 
@@ -397,7 +346,7 @@ You previously generated this SQL query:
 HOWEVER, a code reviewer rejected this SQL for the following reason:
 {missing_logic}
 
-Rewrite the SQL query so that it properly includes the missing logic. 
+Rewrite the SQL query so that it properly includes the missing logic.
 Return ONLY the SQL query with no explanation, no markdown, no code fences.
 """),
     MessagesPlaceholder(variable_name="history"),
@@ -405,7 +354,7 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
 ])
 
 # ----------------------------
-# Core functions
+# Core Helper Functions
 # ----------------------------
 def _parse_history(history) -> list:
     """Safely coerces standard session elements into strictly typed LangChain Message objects."""
@@ -431,22 +380,13 @@ def _parse_history(history) -> list:
     return parsed
 
 def extract_sql_from_cot(llm_response: str) -> str:
-    """
-    Extracts the SQL query from the LLM's response, ignoring the reasoning.
-    Looks specifically for markdown SQL blocks.
-    """
-    # Primary match: look for ```sql [query] ```
-    match = re.search(r"```sql\n(.*?)\n```", llm_response, re.DOTALL | re.IGNORECASE)
+    """Extracts the SQL query from the LLM's response, ignoring the reasoning."""
+    match = re.search(r"sql\n(.*?)\n", llm_response, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
-    
-    # Fallback match: in case the LLM forgets the 'sql' tag and just uses ```
-    match_fallback = re.search(r"```(.*?)```", llm_response, re.DOTALL)
+    match_fallback = re.search(r"(.*?)", llm_response, re.DOTALL)
     if match_fallback:
         return match_fallback.group(1).strip()
-        
-    # Failsafe: If no markdown is found, return the raw response 
-    # (Though with our prompt, this should rarely happen)
     return llm_response.strip()
 
 def validate_sql_intent(question: str, sql: str) -> str:
@@ -457,35 +397,23 @@ def validate_sql_intent(question: str, sql: str) -> str:
     return result
 
 def is_complex_query(question: str) -> bool:
-    """
-    Evaluates the user's question to determine if it requires Chain-of-Thought reasoning.
-    Zero-token heuristic based on word count and complexity keywords.
-    """
+    """Zero-token heuristic evaluating query routing complexity."""
     q_lower = question.lower()
-    
-    # Keywords that imply multi-table joins, date filtering, or complex aggregations
     complexity_indicators = [
         "between", "average", "ratio", "compare", "trend", "month", "year",
-        "both", "multiple", "except", "without", "versus", "vs", "most", 
+        "both", "multiple", "except", "without", "versus", "vs", "most",
         "least", "top", "bottom", "percentage", "group by"
     ]
-    
-    # Route to CoT if the question is heavily constrained (long)
     if len(q_lower.split()) > 15:
         return True
-        
-    # Route to CoT if it hits any complexity keywords
     if any(word in q_lower for word in complexity_indicators):
         return True
-        
     return False
 
 def run_query(sql: str, max_retries: int = 5, delay: int = 3) -> pd.DataFrame | None:
     """Runs the query with a retry loop to handle Neon's cold starts."""
     engine = get_engine()
-    df = None  # Initialize df here
-    
-    # st.status provides a spinner UI that we can update text for dynamically
+    df = None
     with st.status("Connecting to database...", expanded=True) as status:
         for attempt in range(max_retries):
             try:
@@ -494,36 +422,26 @@ def run_query(sql: str, max_retries: int = 5, delay: int = 3) -> pd.DataFrame | 
                     result = conn.execute(text(sql))
                     df = pd.DataFrame(result.fetchall(), columns=result.keys())
                     status.update(label="Query successful!", state="complete", expanded=False)
-                    break  # Exit the retry loop gracefully instead of returning early
-                    
+                    break
             except Exception as e:
                 error_str = str(e).lower()
-                # Check if the error is likely due to the database being asleep
                 is_conn_error = any(keyword in error_str for keyword in [
                     "connection", "timeout", "closed", "ssl", "operationalerror"
                 ])
-                
                 if is_conn_error and attempt < max_retries - 1:
-                    status.update(
-                        label=f"Waking up database... (Attempt {attempt + 1} of {max_retries})", 
-                        state="running"
-                    )
-                    time.sleep(delay)  # Wait a few seconds before trying again
+                    status.update(label=f"Waking up database... (Attempt {attempt + 1})", state="running")
+                    time.sleep(delay)
                 else:
-                    # If it's a strict SQL syntax error or we ran out of retries, fail out
                     status.update(label="Query failed.", state="error")
                     st.session_state["last_sql_error"] = str(e)
                     st.error(f"SQL execution error: {e}")
-                    break  # Also break here on complete failure
-                    
-    # Return df OUTSIDE the context manager so Streamlit fully closes the UI status
+                    break
     return df
 
 def get_column_samples(sql: str) -> str:
-    """Looks at the SQL, finds the tables used, and fetches distinct values for text columns."""
+    """Fetches distinct values for text columns inside referenced tables."""
     engine = get_engine()
     samples = []
-
     words = sql.lower().split()
     tables = []
     for i, word in enumerate(words):
@@ -531,28 +449,18 @@ def get_column_samples(sql: str) -> str:
             table = words[i + 1].strip("(),;")
             if table and not table.startswith("("):
                 tables.append(table)
-
     try:
         with engine.connect() as conn:
             for table in set(tables):
                 try:
                     col_result = conn.execute(text(f"""
-                        SELECT column_name 
-                        FROM information_schema.columns 
-                        WHERE table_name = '{table}' 
-                        AND data_type IN ('text', 'character varying', 'USER-DEFINED')
-                        LIMIT 8
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_name = '{table}' AND data_type IN ('text', 'character varying', 'USER-DEFINED') LIMIT 8
                     """))
                     columns = [row[0] for row in col_result]
-
                     for col in columns:
                         try:
-                            val_result = conn.execute(text(f"""
-                                SELECT DISTINCT {col} 
-                                FROM {table} 
-                                WHERE {col} IS NOT NULL 
-                                LIMIT 5
-                            """))
+                            val_result = conn.execute(text(f"SELECT DISTINCT {col} FROM {table} WHERE {col} IS NOT NULL LIMIT 5"))
                             values = [str(row[0]) for row in val_result]
                             if values:
                                 samples.append(f"{table}.{col}: {', '.join(values)}")
@@ -562,18 +470,12 @@ def get_column_samples(sql: str) -> str:
                     pass
     except:
         pass
-
     return "\n".join(samples)
 
 def get_real_columns_for_sql(sql: str) -> str:
-    """
-    Given a SQL string, extracts all table names referenced and returns
-    their real column lists from information_schema. Used for UndefinedColumn retries.
-    """
+    """Pulls structural structural table info for column handling fallback states."""
     engine = get_engine()
     lines = []
-    
-    # Extract table names from FROM and JOIN clauses
     words = sql.lower().split()
     tables = []
     for i, word in enumerate(words):
@@ -581,40 +483,32 @@ def get_real_columns_for_sql(sql: str) -> str:
             candidate = words[i + 1].strip("(),;")
             if candidate and not candidate.startswith("(") and not candidate.startswith("select"):
                 tables.append(candidate)
-    
     if not tables:
         return ""
-    
     try:
         with engine.connect() as conn:
             for table in set(tables):
                 try:
                     result = conn.execute(text("""
-                        SELECT column_name, data_type
-                        FROM information_schema.columns
-                        WHERE table_schema = 'public'
-                          AND table_name = :table
-                        ORDER BY ordinal_position
+                        SELECT column_name, data_type FROM information_schema.columns
+                        WHERE table_schema = 'public' AND table_name = :table ORDER BY ordinal_position
                     """), {"table": table})
                     cols = [f"{row[0]} ({row[1]})" for row in result]
                     if cols:
                         lines.append(f"Table '{table}' has these columns: {', '.join(cols)}")
-                except Exception:
+                except:
                     pass
-    except Exception:
+    except:
         pass
-    
     return "\n".join(lines)
 
-#----------------------------
-#Execution Pipeline
-#----------------------------
-
+# ----------------------------
+# Execution Pipeline
+# ----------------------------
 def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | None, pd.DataFrame | None]:
-    """Generates SQL, validates intent, runs it, and handles DB retries."""
-
+    """Generates SQL, validates intent, runs it, and handles DB retries with active context processing."""
     parsed_history = _parse_history(history)
-    
+
     with st.expander("🔍 Query Process", expanded=True):
         # Step 0: Context Condensation Layer
         st.markdown("**Step 0: Synchronizing Context ...**")
@@ -625,16 +519,16 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
                 "history": parsed_history,
                 "question": question
             }).content.strip()
-
-           if condensed_question != question:
-               st.info(f"🔄 Rephrased contextually to: *\"{condensed_question}\"*")
-               question = condensed_question
+            
+            if condensed_question != question:
+                st.info(f"🔄 Rephrased contextually to: *\"{condensed_question}\"*")
+                question = condensed_question
         else:
             st.info("🆕 Fresh chat thread started.")
-    
-        # Step 1
+
+        # Step 1: SQL Generation
         st.markdown("**Step 1: Generating SQL...**")
-        sql = generate_sql(question, history=history)
+        sql = generate_sql(question, history=parsed_history)
         
         if not sql:
             st.error("Could not generate a valid SQL query.")
@@ -642,12 +536,11 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
             
         if not sql.lower().startswith("select"):
             st.info("No database query required for this message.")
-            # We return the conversational text as 'sql', but df as None.
             return sql, None
         
         st.code(sql, language="sql")
 
-        # Step 2: Validate Intent
+        # Step 2: Intent Validation
         st.markdown("**Step 2: Validating Query Intent...**")
         validation_result = validate_sql_intent(question, sql)
         
@@ -655,7 +548,6 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
             st.warning(f"⚠️ Code Reviewer flagged an issue: {validation_result}")
             st.markdown("**Step 2.5: Rewriting SQL to include missing parameters...**")
             
-            # Run the targeted rewrite
             llm = get_llm()
             chain = REWRITE_PROMPT | llm
             sql = chain.invoke({
@@ -670,7 +562,7 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
         else:
             st.info("✅ Query passed intent validation.")
         
-        # Step 3
+        # Step 3: Run Database Command
         st.markdown("**Step 3: Running query...**")
         df = run_query(sql)
         sql_error = st.session_state.pop("last_sql_error", None)
@@ -679,14 +571,10 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
             st.success(f"Query returned {len(df)} row(s). No retry needed.")
             return sql, df
         
-        # Step 4 — retry
+        # Step 4: Retries / Fallbacks
         if (df is not None and df.empty) or (df is None and sql_error):
-            
             if sql_error and "undefinedcolumn" in sql_error.lower():
                 st.warning("⚠️ Query used a column that doesn't exist. Fetching real column names...")
-                st.markdown("**Step 4: Injecting real column inventory...**")
-            
-            # Extract the offending table from the error or from the SQL
                 real_columns = get_real_columns_for_sql(sql)
 
                 if real_columns:
@@ -711,44 +599,33 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                         MessagesPlaceholder(variable_name="history"),
                         ("human", "{question}")
                     ])
-                chain = retry_prompt | llm
-                sql = chain.invoke({
-                    "rules": f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}",
-                    "history": parsed_history,
-                    "question": question,
-                    "bad_sql": sql,
-                    "real_columns": real_columns,
-                    "error": sql_error
-                }).content.strip()
-                
-                st.markdown("**Step 4: Retried SQL:**")
-                st.code(sql, language="sql")
-                    
-                df = run_query(sql)
-                sql_error = st.session_state.pop("last_sql_error", None)
-                if df is not None and not df.empty:
-                    st.success(f"✅ Retry successful — {len(df)} row(s).")
-                elif sql_error:
-                    st.error(f"Retry also failed: {sql_error}")
-                else:
-                    st.info("Retry ran but returned 0 results.")
-                return sql, df
+                    chain = retry_prompt | llm
+                    sql = chain.invoke({
+                        "rules": f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}",
+                        "history": parsed_history,
+                        "question": question,
+                        "bad_sql": sql,
+                        "real_columns": real_columns,
+                        "error": sql_error
+                    }).content.strip()
 
-            # --- Branch B: Zero results — inject real enum values ---
+                    st.markdown("**Step 4: Retried SQL:**")
+                    st.code(sql, language="sql")
+                        
+                    df = run_query(sql)
+                    sql_error = st.session_state.pop("last_sql_error", None)
+                    if df is not None and not df.empty:
+                        st.success(f"✅ Retry successful — {len(df)} row(s).")
+                    return sql, df
             else:
                 if sql_error:
                     st.warning(f"⚠️ Query failed: {sql_error}")
                 else:
                     st.warning("⚠️ Query returned 0 results. Checking actual stored values...")
                 
-                st.markdown("**Step 3: Fetching column value samples...**")
                 samples = get_column_samples(sql)
-                
                 if samples:
-                    # Don't dump raw samples to UI — just confirm we got them
                     st.info("✅ Retrieved column value samples for retry.")
-                    st.markdown("**Step 4: Retrying with correct values...**")
-                    
                     llm = get_llm()
                     retry_prompt = ChatPromptTemplate.from_messages([
                         ("system", """
@@ -774,34 +651,24 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                         "bad_sql": sql,
                         "samples": samples
                     }).content.strip()
-                    
+
                     st.markdown("**Step 4: Retried SQL:**")
                     st.code(sql, language="sql")
                     
                     df = run_query(sql)
-                    sql_error = st.session_state.pop("last_sql_error", None)
                     if df is not None and not df.empty:
                         st.success(f"✅ Retry successful — {len(df)} row(s).")
-                    elif sql_error:
-                        st.error(f"Retry also failed: {sql_error}")
-                    else:
-                        st.info("Retry ran but returned 0 results.")
                 else:
                     st.warning("Could not fetch column samples for retry.")
-    
+
     return sql, df
 
 def generate_sql(question: str, history: list = None) -> str | None:
-    """Generates SQL using CoT reasoning and structured chat history."""
+    """Generates clean executable SQL routing based on complexity heuristics."""
     if history is None:
         history = []
-    
     llm = get_llm()
-    
-    # 1. Evaluate complexity
     requires_cot = is_complex_query(question)
-    
-    # 2. Route to the correct prompt
     prompt_template = COMPLEX_SQL_PROMPT if requires_cot else SIMPLE_SQL_PROMPT
     chain = prompt_template | llm
 
@@ -811,11 +678,7 @@ def generate_sql(question: str, history: list = None) -> str | None:
             "history": history,
             "question": question
         }).content
-        
-        # Strip out the reasoning, leaving only the executable SQL
-        clean_sql = extract_sql_from_cot(raw_response)
-        return clean_sql
-        
+        return extract_sql_from_cot(raw_response)
     except Exception as e:
         st.error(f"Error generating SQL: {e}")
         return None
@@ -851,7 +714,7 @@ def run_sql_cached(sql: str):
     return run_query(sql)
 
 def should_generate_chart_cached(question, sql, df):
-    return False  # charts dropped for prototype
+    return False
 
 def generate_plotly_code_cached(question, sql, df):
     return None
@@ -866,12 +729,10 @@ def generate_followup_cached(question, sql, df):
 def generate_summary_cached(question, df):
     if df is None or df.empty:
         return "No data was returned for that question."
-
     if len(df) == 1:
         return generate_response(question, df)
     elif len(df) <= 5:
         return generate_response(question, df.head(5))
     else:
-        # For large result sets, just confirm what was returned
         cols = ", ".join(df.columns.tolist())
         return f"Query returned {len(df)} records with columns: {cols}."
