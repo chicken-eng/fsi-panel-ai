@@ -35,10 +35,10 @@ def get_llm():
 SEMANTIC_GLOSSARY = """
 SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
 1. RESPONDENT TYPES (Filter via respondent_type_specification and respondent_type tables):
-   - "Consumer"or "consumer" or "consumers" or "Consumers"  -> respondent_type.type_name = 'Consumer'
-   - "HCP" or "hcp" or "Hcp" or "HCPs" or "hcps" or "HCP's" or "hcp's" or "Healthcare Professional" -> respondent_type.type_name = 'HCP'
-   - "Patient/Caregiver" or "Patients" or "Patient" or "patient" or ""patients -> respondent_type.type_name = 'Patient/Caregiver'
-   - "B2B" or "Business Respondent" -> respondent_type.type_name = 'B2B'
+   - Variations of "Consumer" -> respondent_type.type_name = 'Consumer'
+   - Variations of "HCP" -> respondent_type.type_name = 'HCP'
+   - Variations of "Patient" or "Caregiver" -> respondent_type.type_name = 'Patient/Caregiver'
+   - Variations of "B2B" or "Business Respondent" -> respondent_type.type_name = 'B2B'
 
 2. CALCULATING AGE:
    - "Age" or "Ages between X and Y" is NEVER a column. You must ALWAYS calculate it dynamically from r.date_of_birth using PostgreSQL AGE function.
@@ -46,7 +46,8 @@ SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
 
 3. HEALTHCARE PROFFESIONALS
    - Terms like "Physician", "Nurse", "Surgeon", "Pharmacist", "Technician", "Dentist", "Midwife", "Admin", "Manager", "Student", "Research/Laboratory", "Retired",
-   are all HCP job titles (Filter via respondent_hcp_job_title and hcp_job_title tables). Any other values mentioned during a HCP search e.g. 'Oncology' is a specialty and must be filtered through respondent_hcp_specialty and hcp_job_specialty tables. 
+   are all HCP job titles (Filter via respondent_hcp_job_title and hcp_job_title tables). 
+   - Any other values mentioned during a HCP search e.g. 'Oncology' is a specialty and must be filtered through respondent_hcp_specialty and hcp_job_specialty tables. 
 
 4. DATES
    - When asked about when a respondent was created, made, first appeared etc filter using created_date from respondent_type_specification table. You will find multiple create_dates if respondent has different types, in this case take the oldest date.
@@ -57,8 +58,17 @@ SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
    - Words like participate, took part, applied, will be used in relation to projects. When asked such question filter via project_respondent and projects tables.
    - If the question about a project requires a date or date range use the last_activity_date to filter.
 
-5.ETHNICITY
-  - Whenever asked about ethnicity filter via respondents table. If asked for whites use "White European" and "White Irish" and "White American" and "White British" and "Gypsy or Irish Traveller" and "Any other white background". 
+6.ETHNICITY
+  - Whenever asked about ethnicity filter via respondents table. 
+  - If asked for whites use "White European" and "White Irish" and "White American" and "White British" and "Gypsy or Irish Traveller" and "Any other white background". 
+
+7.ENUMS
+  - Several columns in the database are PostgreSQL enum types, not plain text (e.g., country, uk_region, county_state, gender, industry, job_status).
+  - NEVER assume the format or use abbreviations. Always use the full stored value exactly as it appears in the database (e.g., 'United States of America' not 'US', 'United Kingdom' not 'UK', 'Male' not 'M').
+  - When unsure of the exact enum value, use ILIKE for partial matching (e.g., WHERE column::text ILIKE '%keyword%'). This casts the enum to text first to avoid type errors.
+
+8.DEMOGRAPHICS
+  - Whenever a search/request inclued cities always us ILIKE for partial matching instead of searching using the actual value in the question.
 """
 
 @st.cache_resource
@@ -199,35 +209,21 @@ CRITICAL RULES YOU MUST ALWAYS FOLLOW:
 2. Always use lowercase table and column names.
 3. Use PostgreSQL syntax only.
 4. DISREGARD is_deleted and is_active columns from respondent and respondent_type_specification tables in your queries unless specified in the question.
-5. Your response should only be a brief summary of what you found, never the raw rows themselves.
-6. Several columns in the database are PostgreSQL enum types, not plain text. 
-   These include but are not limited to: country, uk_region, county_state, gender, 
-   ethnicity, relationship, job_status, job_title_tier, industry, 
-   highest_education_level, annual_household_income, company_size, company_turnover, 
-   years_in_business, approximate_salary_bracket, project_state, company_turnover.
-   
-   For ANY column that filters by a categorical or descriptive value, NEVER assume 
-   the format or use abbreviations. Always use the full stored value exactly as it 
-   appears in the database. For example: 'United States of America' not 'US', 
-   'United Kingdom' not 'UK', 'Male' not 'M'.
-   
-   When unsure of the exact enum value, use ILIKE for partial matching instead:
-   WHERE column::text ILIKE '%keyword%' This casts the enum to text first which avoids type errors entirely.
-7. ALWAYS qualify every column name with its table alias when writing JOIN queries.
+5. ALWAYS qualify every column name with its table alias when writing JOIN queries.
    Never write SELECT email, SELECT country etc when multiple tables are joined.
    Always write SELECT r.email, SELECT a.country etc.
    This applies to WHERE clauses, ON clauses, GROUP BY, and ORDER BY as well.
    Example: WHERE r.email NOT IN (...) not WHERE email NOT IN (...).
-8.When a question asks to COUNT something, return a single aliased column.
-    Example: SELECT COUNT(DISTINCT r.email) AS total_respondents
-    Never return an unnamed count column.
-9.When joining respondent to addresses, always use LEFT JOIN not INNER JOIN unless 
-    the question specifically requires an address field to be present. Many respondents 
-    may not have an address record and an INNER JOIN would silently exclude them from 
-    counts.
-10.Never use SELECT * in any query. Always specify the columns you need explicitly.
-11. When filtering by date, always use TIMESTAMP WITH TIME ZONE safe comparisons (e.g., column_name >= '2024-01-01'::timestamptz). 
-Use only date columns explicitly listed in the schema.
+6. When a question asks to COUNT something, return a single aliased column.
+   Example: SELECT COUNT(DISTINCT r.email) AS total_respondents
+   Never return an unnamed count column.
+7. When joining respondent to addresses, always use LEFT JOIN not INNER JOIN unless 
+   the question specifically requires an address field to be present. Many respondents 
+   may not have an address record and an INNER JOIN would silently exclude them from 
+   counts.
+8. Never use SELECT * in any query. Always specify the columns you need explicitly.
+9. When filtering by date, always use TIMESTAMP WITH TIME ZONE safe comparisons (e.g., column_name >= '2024-01-01'::timestamptz). 
+   Use only date columns explicitly listed in the schema.
 """
 
 STATIC_SCHEMA_FALLBACK = """
@@ -303,7 +299,7 @@ CONTEXTUALIZE_PROMPT = ChatPromptTemplate.from_messages([
 You are an expert conversational context manager. Your sole job is to review a chat history between a data analyst and a user, look at the latest follow-up statement, and combine them into a single, self-contained, completely unambiguous question.
 
 CRITICAL RULES:
-1. Preserve Aggregation Context: If a previous question asked for a count ("how many", "total"), and the follow-up asks about a different category or subset (e.g., "and hcps?", "how about females?" "what about in the UK?"), you MUST carry over the count intent into the rewritten question. Do NOT change a count request into a list tracking request.
+1. Preserve Aggregation Context: If a previous question asked for something like "how many", "total", "List", "Give me", and the follow-up asks about a different category or subset (e.g., "and hcps?", "how about females?" "what about in the UK?") or uses terms like ("them", "those", "out of"), you MUST carry over the previous intent(count, list etc) into the rewritten question. Do NOT change the request just adjust the filter(s) as specified.
 2. Maintain Existing Filters: If the conversation thread establishes baseline constraints (e.g., active users, specific years), keep those filters active in the rewritten question unless explicitly overridden by the follow-up.
 3. Keep it brief: Output ONLY the completely rewritten standalone question. No markdown code fences, no commentary, no preamble.
 """),
