@@ -301,7 +301,7 @@ The PostgreSQL database contains the following key tables:
 # ----------------------------
 # SQL generation prompt
 # ----------------------------
-SQL_PROMPT = ChatPromptTemplate.from_messages([
+SIMPLE_SQL_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """
 {schema}
 
