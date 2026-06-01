@@ -381,10 +381,10 @@ def _parse_history(history) -> list:
 
 def extract_sql_from_cot(llm_response: str) -> str:
     """Extracts the SQL query from the LLM's response, ignoring the reasoning."""
-    match = re.search(r"sql\n(.*?)\n", llm_response, re.DOTALL | re.IGNORECASE)
+    match = re.search(r"```sql\s*(.*?)```", llm_response, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
-    match_fallback = re.search(r"(.*?)", llm_response, re.DOTALL)
+    match_fallback = re.search(r"```(.*?)```", llm_response, re.DOTALL)
     if match_fallback:
         return match_fallback.group(1).strip()
     return llm_response.strip()
@@ -573,7 +573,9 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
         
         # Step 4: Retries / Fallbacks
         if (df is not None and df.empty) or (df is None and sql_error):
-            if sql_error and "undefinedcolumn" in sql_error.lower():
+            if sql_error and ("undefinedcolumn" in sql_error.lower() 
+                  or "undefinedtable" in sql_error.lower()
+                  or "missing from-clause" in sql_error.lower()):
                 st.warning("⚠️ Query used a column that doesn't exist. Fetching real column names...")
                 real_columns = get_real_columns_for_sql(sql)
 
