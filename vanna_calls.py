@@ -8,6 +8,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import RunnableSequence
 import time
 import re
+from collections import defaultdict
 
 # ----------------------------
 # Database connection
@@ -106,7 +107,6 @@ def get_schema_description() -> str:
             """), {"tables": tables})
             
             # 3. Group columns by table
-            from collections import defaultdict
             table_cols = defaultdict(list)
             for row in cols_result:
                 table_name, col_name, data_type, nullable, constraint = row
@@ -548,7 +548,7 @@ def validate_sql_intent(question: str, sql: str) -> str:
     result = chain.invoke({"question": question, "sql": sql}).content.strip()
     return result
 
-def generate_sql_with_retry(question: str, history: str = "") -> tuple[str | None, pd.DataFrame | None]:
+def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | None, pd.DataFrame | None]:
     """Generates SQL, validates intent, runs it, and handles DB retries."""
     if history is None:
         history = []
@@ -775,7 +775,6 @@ def generate_response(question: str, df: pd.DataFrame) -> str | None:
 # ----------------------------
 # Cached wrappers (matching app.py signatures exactly)
 # ----------------------------
-@st.cache_data(show_spinner="Generating sample questions ...")
 def generate_questions_cached():
     return [
         "How many active respondents do we have?",
@@ -797,19 +796,15 @@ def is_sql_valid_cached(sql: str):
 def run_sql_cached(sql: str):
     return run_query(sql)
 
-@st.cache_data(show_spinner="Checking if we should generate a chart ...")
 def should_generate_chart_cached(question, sql, df):
     return False  # charts dropped for prototype
 
-@st.cache_data(show_spinner="Generating Plotly code ...")
 def generate_plotly_code_cached(question, sql, df):
     return None
 
-@st.cache_data(show_spinner="Running Plotly code ...")
 def generate_plot_cached(code, df):
     return None
 
-@st.cache_data(show_spinner="Generating followup questions ...")
 def generate_followup_cached(question, sql, df):
     return []
 
@@ -826,4 +821,3 @@ def generate_summary_cached(question, df):
         # For large result sets, just confirm what was returned
         cols = ", ".join(df.columns.tolist())
         return f"Query returned {len(df)} records with columns: {cols}."
-    return generate_response(question, df)
