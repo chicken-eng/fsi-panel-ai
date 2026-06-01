@@ -60,12 +60,12 @@ SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
 
 6.ETHNICITY
   - Whenever asked about ethnicity filter via respondents table. 
-  - If asked for whites use "White European" and "White Irish" and "White American" and "White British" and "Gypsy or Irish Traveller" and "Any other white background". 
+  - If asked for whites/caucasians use WHERE r.ethnicity IN ('White European', 'White Irish', 'White American', 'White British', 'Gypsy or Irish Traveller', 'Any other white background'). 
 
 7.ENUMS
   - Several columns in the database are PostgreSQL enum types, not plain text (e.g., country, uk_region, county_state, gender, industry, job_status).
   - NEVER assume the format or use abbreviations. Always use the full stored value exactly as it appears in the database (e.g., 'United States of America' not 'US', 'United Kingdom' not 'UK', 'Male' not 'M').
-  - When unsure of the exact enum value, use ILIKE for partial matching (e.g., WHERE column::text ILIKE '%keyword%'). This casts the enum to text first to avoid type errors.
+  - When unsure of the exact enum value, convert the enum to string first then use ILIKE for partial matching (e.g., WHERE column::text ILIKE '%keyword%'). This casts the enum to text first to avoid type errors.
 
 8.DEMOGRAPHICS
   - Whenever a search/request inclued cities always us ILIKE for partial matching instead of searching using the actual value in the question.
