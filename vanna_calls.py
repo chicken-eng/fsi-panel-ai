@@ -175,7 +175,14 @@ def get_schema_description() -> str:
     except Exception as e:
         # Fall back to static description if DB is unreachable
         st.warning(f"Could not load live schema, using static fallback: {e}")
-        return STATIC_SCHEMA_FALLBACK
+        
+        fallback_lines = [
+            STATIC_SCHEMA_FALLBACK,
+            SEMANTIC_GLOSSARY,
+            "",
+            BUSINESS_CONTEXT
+        ]
+        return "\n".join(fallback_lines)
         
 # ----------------------------
 # Schema context
@@ -292,53 +299,6 @@ The PostgreSQL database contains the following key tables:
   company_size, company_turnover, years_in_business, industry, approximate_salary_bracket.
 
 - providers / servers: Email sending infrastructure lookup tables.
-
-CRITICAL RULES YOU MUST ALWAYS FOLLOW:
-1. ALWAYS exclude emails that appear in the unsubscribe_blacklist table from ANY query 
-   result that returns respondent emails or counts. Always use:
-   AND email NOT IN (SELECT email FROM unsubscribe_blacklist)
-   or a LEFT JOIN with WHERE unsubscribe_blacklist.email IS NULL.
-2. Never query staging tables (staging_emails, staging_respondents, staging_projects, 
-   staging_respondent_projects).
-3. Never query the error_log table.
-4. Always use lowercase table and column names.
-5. Use PostgreSQL syntax only.
-6. You can disregard is_deleted and is_active in everyday queries unless specified in the question.
-7. When you run a SQL query that returns data, DO NOT generate a Markdown table of the results in your text response. 
-   The user interface will automatically display the data. 
-   Your text response should only be a brief summary of what you found, never the raw rows themselves.
-8. Several columns in the database are PostgreSQL enum types, not plain text. 
-   These include but are not limited to: country, uk_region, county_state, gender, 
-   ethnicity, relationship, job_status, job_title_tier, industry, 
-   highest_education_level, annual_household_income, company_size, company_turnover, 
-   years_in_business, approximate_salary_bracket, project_state, company_turnover.
-   
-   For ANY column that filters by a categorical or descriptive value, NEVER assume 
-   the format or use abbreviations. Always use the full stored value exactly as it 
-   appears in the database. For example: 'United States of America' not 'US', 
-   'United Kingdom' not 'UK', 'Male' not 'M'.
-   
-   When unsure of the exact enum value, use ILIKE for partial matching instead:
-   WHERE column::text ILIKE '%keyword%'
-   This casts the enum to text first which avoids type errors entirely.
-9. ALWAYS qualify every column name with its table alias when writing JOIN queries.
-   Never write SELECT email, SELECT country etc when multiple tables are joined.
-   Always write SELECT r.email, SELECT a.country etc.
-   This applies to WHERE clauses, ON clauses, GROUP BY, and ORDER BY as well.
-   Example: WHERE r.email NOT IN (...) not WHERE email NOT IN (...).
-10.When a question asks for a LIST of people or records, always include at minimum:
-   r.email, r.first_name, r.last_name in the SELECT. Never return email alone 
-   as a list — it is not human readable enough.
-11.When a question asks to COUNT something, return a single aliased column.
-    Example: SELECT COUNT(DISTINCT r.email) AS total_respondents
-    Never return an unnamed count column.
-12.When joining respondent to addresses, always use LEFT JOIN not INNER JOIN unless 
-    the question specifically requires an address field to be present. Many respondents 
-    may not have an address record and an INNER JOIN would silently exclude them from 
-    counts.
-13.Never use SELECT * in any query. Always specify the columns you need explicitly.
-14. When filtering by date, always use TIMESTAMP WITH TIME ZONE safe comparisons (e.g., column_name >= '2024-01-01'::timestamptz). 
-Use only date columns explicitly listed in the schema.
 """
 
 # ----------------------------
