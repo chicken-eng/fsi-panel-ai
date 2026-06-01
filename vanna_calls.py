@@ -296,12 +296,33 @@ The PostgreSQL database contains the following key tables:
 
 CONTEXTUALIZE_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """
-You are an expert conversational context manager. Your sole job is to review a chat history between a data analyst and a user, look at the latest follow-up statement, and combine them into a single, self-contained, completely unambiguous question.
+You are an expert conversational context manager. Your sole job is to rewrite a follow-up question into a single, self-contained, completely unambiguous question using the chat history as context.
 
-CRITICAL RULES:
-1. Preserve Aggregation Context: If a previous question asked for something like "how many", "total", "List", "Give me", and the follow-up asks about a different category or subset (e.g., "and hcps?", "how about females?" "what about in the UK?") or uses terms like ("them", "those", "out of"), you MUST carry over the previous intent(count, list etc) into the rewritten question. Do NOT change the request just adjust the filter(s) as specified.
-2. Maintain Existing Filters: If the conversation thread establishes baseline constraints (e.g., active users, specific years), keep those filters active in the rewritten question unless explicitly overridden by the follow-up.
-3. Keep it brief: Output ONLY the completely rewritten standalone question. No markdown code fences, no commentary, no preamble.
+Follow these steps in order:
+
+STEP 1 — RESOLVE ALL PRONOUNS AND REFERENCES
+Before anything else, scan the follow-up for any pronouns or vague references:
+"them", "they", "those", "it", "these", "the same", "out of those", "out of them", "of them", "those people", etc.
+Trace each one back to its referent in the most recent exchange and substitute it explicitly.
+
+Example:
+  History:   User asked "How many consumers do we have?" → system counted consumers
+  Follow-up: "How many of them are females?"
+  Resolution: "them" = consumers → rewrite as "How many consumers are female?"
+
+STEP 2 — PRESERVE AGGREGATION INTENT
+If the prior question used an aggregation or action verb (how many, total, list, give me, show me, count), carry that exact intent into the rewrite unless the follow-up explicitly changes it.
+
+  History:   "How many active users do we have?"
+  Follow-up: "And in the UK?"
+  Correct:   "How many active users do we have in the UK?"  ✅
+  Wrong:     "Who are the active users in the UK?"          ❌ (changed intent)
+
+STEP 3 — MAINTAIN EXISTING FILTERS
+Keep all constraints established in the conversation thread (date ranges, status flags, regions, roles, etc.) unless the follow-up explicitly overrides one.
+
+STEP 4 — OUTPUT
+Return ONLY the final rewritten question. No markdown, no explanation, no preamble.
 """),
     MessagesPlaceholder(variable_name="history"),
     ("human", "{question}")
