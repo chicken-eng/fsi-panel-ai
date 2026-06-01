@@ -22,7 +22,7 @@ def get_engine():
     return create_engine(url)
 
 # ----------------------------
-# Gemini LLM
+# LLM Configuration
 # ----------------------------
 @st.cache_resource
 def get_llm():
@@ -61,10 +61,7 @@ SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
 @st.cache_resource
 def get_schema_description() -> str:
     """
-    Pulls live schema from the database and formats it for the LLM,
-    then appends the static business rules.
-    Only runs once per app session due to cache_resource.
-    """
+    Pulls live schema from the database and formats it for the LLM"""
     engine = get_engine()
     
     try:
@@ -299,8 +296,22 @@ The PostgreSQL database contains the following key tables:
 """
 
 # ----------------------------
-# SQL generation prompt
+# Prompt templates
 # ----------------------------
+
+CONTEXTUALIZE_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """
+You are an expert conversational context manager. Your sole job is to review a chat history between a data analyst and a user, look at the latest follow-up statement, and combine them into a single, self-contained, completely unambiguous question.
+
+CRITICAL RULES:
+1. Preserve Aggregation Context: If a previous question asked for a count ("how many", "total"), and the follow-up asks about a different category or subset (e.g., "and hcps?", "what about in the UK?"), you MUST carry over the count intent into the rewritten question. Do NOT change a count request into a list tracking request.
+2. Maintain Existing Filters: If the conversation thread establishes baseline constraints (e.g., active users, specific years), keep those filters active in the rewritten question unless explicitly overridden by the follow-up.
+3. Keep it brief: Output ONLY the completely rewritten standalone question. No markdown code fences, no commentary, no preamble.
+"""),
+    MessagesPlaceholder(variable_name="history"),
+    ("human", "{question}")
+])
+
 SIMPLE_SQL_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """
 {schema}
@@ -336,9 +347,6 @@ After your reasoning, provide the final, highly optimized PostgreSQL query enclo
     ("human", "{question}")
 ])
 
-# ----------------------------
-# Response format prompt
-# ----------------------------
 RESPONSE_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """
 You are a data analyst reporting internal database results to a colleague.
@@ -359,9 +367,119 @@ The query returned this data:
 """)
 ])
 
+VALIDATION_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """
+You are a strict SQL code reviewer for a market research database.
+
+Perform these two checks:
+1. Filters: Does the SQL apply EVERY filter and condition requested in the user's question (e.g., age ranges, gender, respondent types)?
+2. Output Format: Does the SQL use the correct aggregation? If the user asks "how many" or the question implies a count, the SQL MUST use COUNT(). If they ask for a list, it MUST select email, first_name, last_name.
+
+- If the SQL accurately reflects all constraints AND the correct output format, reply EXACTLY with: VALID
+- If the SQL is missing parameters or uses the wrong output format (e.g., returning a list when a count is expected), reply ONLY with a brief description of what is wrong. Example: "Missing filter for ages 20-45" or "Should be a COUNT() query, not a SELECT list."
+"""),
+    ("human", """
+A user asked: "{question}"
+
+The generated SQL is:
+```sql
+{sql}
+""")
+])
+
+REWRITE_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """
+{rules}
+
+You previously generated this SQL query:
+{bad_sql}
+
+HOWEVER, a code reviewer rejected this SQL for the following reason:
+{missing_logic}
+
+Rewrite the SQL query so that it properly includes the missing logic. 
+Return ONLY the SQL query with no explanation, no markdown, no code fences.
+"""),
+    MessagesPlaceholder(variable_name="history"),
+    ("human", "{question}")
+])
+
 # ----------------------------
 # Core functions
 # ----------------------------
+def _parse_history(history) -> list:
+    """Safely coerces standard session elements into strictly typed LangChain Message objects."""
+    if not history:
+        return []
+    parsed = []
+    for msg in history:
+        if isinstance(msg, dict):
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role in ("user", "human"):
+                parsed.append(HumanMessage(content=content))
+            elif role in ("assistant", "ai"):
+                parsed.append(AIMessage(content=content))
+        elif isinstance(msg, tuple) and len(msg) == 2:
+            role, content = msg
+            if role in ("user", "human"):
+                parsed.append(HumanMessage(content=content))
+            elif role in ("assistant", "ai"):
+                parsed.append(AIMessage(content=content))
+        elif hasattr(msg, "content"):
+            parsed.append(msg)
+    return parsed
+
+def extract_sql_from_cot(llm_response: str) -> str:
+    """
+    Extracts the SQL query from the LLM's response, ignoring the reasoning.
+    Looks specifically for markdown SQL blocks.
+    """
+    # Primary match: look for ```sql [query] ```
+    match = re.search(r"```sql\n(.*?)\n```", llm_response, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    
+    # Fallback match: in case the LLM forgets the 'sql' tag and just uses ```
+    match_fallback = re.search(r"```(.*?)```", llm_response, re.DOTALL)
+    if match_fallback:
+        return match_fallback.group(1).strip()
+        
+    # Failsafe: If no markdown is found, return the raw response 
+    # (Though with our prompt, this should rarely happen)
+    return llm_response.strip()
+
+def validate_sql_intent(question: str, sql: str) -> str:
+    """Checks if the generated SQL dropped any user parameters."""
+    llm = get_llm()
+    chain = VALIDATION_PROMPT | llm
+    result = chain.invoke({"question": question, "sql": sql}).content.strip()
+    return result
+
+def is_complex_query(question: str) -> bool:
+    """
+    Evaluates the user's question to determine if it requires Chain-of-Thought reasoning.
+    Zero-token heuristic based on word count and complexity keywords.
+    """
+    q_lower = question.lower()
+    
+    # Keywords that imply multi-table joins, date filtering, or complex aggregations
+    complexity_indicators = [
+        "between", "average", "ratio", "compare", "trend", "month", "year",
+        "both", "multiple", "except", "without", "versus", "vs", "most", 
+        "least", "top", "bottom", "percentage", "group by"
+    ]
+    
+    # Route to CoT if the question is heavily constrained (long)
+    if len(q_lower.split()) > 15:
+        return True
+        
+    # Route to CoT if it hits any complexity keywords
+    if any(word in q_lower for word in complexity_indicators):
+        return True
+        
+    return False
+
 def run_query(sql: str, max_retries: int = 5, delay: int = 3) -> pd.DataFrame | None:
     """Runs the query with a retry loop to handle Neon's cold starts."""
     engine = get_engine()
@@ -488,75 +606,32 @@ def get_real_columns_for_sql(sql: str) -> str:
     
     return "\n".join(lines)
 
-VALIDATION_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """
-You are a strict SQL code reviewer for a market research database.
-
-Perform these two checks:
-1. Filters: Does the SQL apply EVERY filter and condition requested in the user's question (e.g., age ranges, gender, respondent types)?
-2. Output Format: Does the SQL use the correct aggregation? If the user asks "how many" or the question implies a count, the SQL MUST use COUNT(). If they ask for a list, it MUST select email, first_name, last_name.
-
-- If the SQL accurately reflects all constraints AND the correct output format, reply EXACTLY with: VALID
-- If the SQL is missing parameters or uses the wrong output format (e.g., returning a list when a count is expected), reply ONLY with a brief description of what is wrong. Example: "Missing filter for ages 20-45" or "Should be a COUNT() query, not a SELECT list."
-"""),
-    ("human", """
-A user asked: "{question}"
-
-The generated SQL is:
-```sql
-{sql}
-""")
-])
-
-REWRITE_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """
-{rules}
-
-You previously generated this SQL query:
-{bad_sql}
-
-HOWEVER, a code reviewer rejected this SQL for the following reason:
-{missing_logic}
-
-Rewrite the SQL query so that it properly includes the missing logic. 
-Return ONLY the SQL query with no explanation, no markdown, no code fences.
-"""),
-    MessagesPlaceholder(variable_name="history"),
-    ("human", "{question}")
-])
-
-def extract_sql_from_cot(llm_response: str) -> str:
-    """
-    Extracts the SQL query from the LLM's response, ignoring the reasoning.
-    Looks specifically for markdown SQL blocks.
-    """
-    # Primary match: look for ```sql [query] ```
-    match = re.search(r"```sql\n(.*?)\n```", llm_response, re.DOTALL | re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-    
-    # Fallback match: in case the LLM forgets the 'sql' tag and just uses ```
-    match_fallback = re.search(r"```(.*?)```", llm_response, re.DOTALL)
-    if match_fallback:
-        return match_fallback.group(1).strip()
-        
-    # Failsafe: If no markdown is found, return the raw response 
-    # (Though with our prompt, this should rarely happen)
-    return llm_response.strip()
-
-def validate_sql_intent(question: str, sql: str) -> str:
-    """Checks if the generated SQL dropped any user parameters."""
-    llm = get_llm()
-    chain = VALIDATION_PROMPT | llm
-    result = chain.invoke({"question": question, "sql": sql}).content.strip()
-    return result
+#----------------------------
+#Execution Pipeline
+#----------------------------
 
 def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | None, pd.DataFrame | None]:
     """Generates SQL, validates intent, runs it, and handles DB retries."""
-    if history is None:
-        history = []
+
+    parsed_history = _parse_history(history)
     
     with st.expander("🔍 Query Process", expanded=True):
+        # Step 0: Context Condensation Layer
+        st.markdown("**Step 0: Synchronizing Context ...**")
+        if parsed_history:
+            llm = get_llm()
+            context_chain = CONTEXTUALIZE_PROMPT | llm
+            condensed_question = context_chain.invoke({
+                "history": parsed_history,
+                "question": question
+            }).content.strip()
+
+           if condensed_question != question:
+               st.info(f"🔄 Rephrased contextually to: *\"{condensed_question}\"*")
+               question = condensed_question
+        else:
+            st.info("🆕 Fresh chat thread started.")
+    
         # Step 1
         st.markdown("**Step 1: Generating SQL...**")
         sql = generate_sql(question, history=history)
@@ -572,7 +647,7 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
         
         st.code(sql, language="sql")
 
-        # Step 1.5: Validate Intent (The New Critic Step)
+        # Step 2: Validate Intent
         st.markdown("**Step 2: Validating Query Intent...**")
         validation_result = validate_sql_intent(question, sql)
         
@@ -585,7 +660,7 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
             chain = REWRITE_PROMPT | llm
             sql = chain.invoke({
                 "rules": f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}",
-                "history": history,
+                "history": parsed_history,
                 "question": question,
                 "bad_sql": sql,
                 "missing_logic": validation_result
@@ -595,8 +670,8 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
         else:
             st.info("✅ Query passed intent validation.")
         
-        # Step 2
-        st.markdown("**Step 2: Running query...**")
+        # Step 3
+        st.markdown("**Step 3: Running query...**")
         df = run_query(sql)
         sql_error = st.session_state.pop("last_sql_error", None)
         
@@ -604,12 +679,12 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
             st.success(f"Query returned {len(df)} row(s). No retry needed.")
             return sql, df
         
-        # Step 3 — retry
+        # Step 4 — retry
         if (df is not None and df.empty) or (df is None and sql_error):
             
             if sql_error and "undefinedcolumn" in sql_error.lower():
                 st.warning("⚠️ Query used a column that doesn't exist. Fetching real column names...")
-                st.markdown("**Step 3: Injecting real column inventory...**")
+                st.markdown("**Step 4: Injecting real column inventory...**")
             
             # Extract the offending table from the error or from the SQL
                 real_columns = get_real_columns_for_sql(sql)
@@ -639,7 +714,7 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                 chain = retry_prompt | llm
                 sql = chain.invoke({
                     "rules": f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}",
-                    "history": history,
+                    "history": parsed_history,
                     "question": question,
                     "bad_sql": sql,
                     "real_columns": real_columns,
@@ -694,7 +769,7 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                     chain = retry_prompt | llm
                     sql = chain.invoke({
                         "rules": f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}",
-                        "history": history,
+                        "history": parsed_history,
                         "question": question,
                         "bad_sql": sql,
                         "samples": samples
@@ -715,30 +790,6 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                     st.warning("Could not fetch column samples for retry.")
     
     return sql, df
-
-def is_complex_query(question: str) -> bool:
-    """
-    Evaluates the user's question to determine if it requires Chain-of-Thought reasoning.
-    Zero-token heuristic based on word count and complexity keywords.
-    """
-    q_lower = question.lower()
-    
-    # Keywords that imply multi-table joins, date filtering, or complex aggregations
-    complexity_indicators = [
-        "between", "average", "ratio", "compare", "trend", "month", "year",
-        "both", "multiple", "except", "without", "versus", "vs", "most", 
-        "least", "top", "bottom", "percentage", "group by"
-    ]
-    
-    # Route to CoT if the question is heavily constrained (long)
-    if len(q_lower.split()) > 15:
-        return True
-        
-    # Route to CoT if it hits any complexity keywords
-    if any(word in q_lower for word in complexity_indicators):
-        return True
-        
-    return False
 
 def generate_sql(question: str, history: list = None) -> str | None:
     """Generates SQL using CoT reasoning and structured chat history."""
@@ -776,7 +827,7 @@ def generate_response(question: str, df: pd.DataFrame) -> str | None:
     return chain.invoke({"question": question, "data": data_str}).content
 
 # ----------------------------
-# Cached wrappers (matching app.py signatures exactly)
+# Interface Compatibility Stubs
 # ----------------------------
 def generate_questions_cached():
     return [
