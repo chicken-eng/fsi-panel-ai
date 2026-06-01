@@ -35,9 +35,9 @@ def get_llm():
 SEMANTIC_GLOSSARY = """
 SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
 1. RESPONDENT TYPES (Filter via respondent_type_specification and respondent_type tables):
-   - "Consumer" -> respondent_type.type_name = 'Consumer'
-   - "HCP" or "Healthcare Professional" -> respondent_type.type_name = 'HCP'
-   - "Patient/Caregiver" -> respondent_type.type_name = 'Patient/Caregiver'
+   - "Consumer"or "consumer" or "consumers" or "Consumers"  -> respondent_type.type_name = 'Consumer'
+   - "HCP" or "hcp" or "Hcp" or "HCPs" or "hcps" or "HCP's" or "hcp's" or "Healthcare Professional" -> respondent_type.type_name = 'HCP'
+   - "Patient/Caregiver" or "Patients" or "Patient" or "patient" or ""patients -> respondent_type.type_name = 'Patient/Caregiver'
    - "B2B" or "Business Respondent" -> respondent_type.type_name = 'B2B'
 
 2. CALCULATING AGE:
@@ -56,6 +56,9 @@ SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
 5. PROJECTS
    - Words like participate, took part, applied, will be used in relation to projects. When asked such question filter via project_respondent and projects tables.
    - If the question about a project requires a date or date range use the last_activity_date to filter.
+
+5.ETHNICITY
+  - Whenever asked about ethnicity filter via respondents table. If asked for whites use "White European" and "White Irish" and "White American" and "White British" and "Gypsy or Irish Traveller" and "Any other white background". 
 """
 
 @st.cache_resource
@@ -193,12 +196,11 @@ CRITICAL RULES YOU MUST ALWAYS FOLLOW:
    result that returns respondent emails or counts unless specified otherwise. Always use:
    AND email NOT IN (SELECT email FROM unsubscribe_blacklist)
    or a LEFT JOIN with WHERE unsubscribe_blacklist.email IS NULL.
-2. Never query the error_log table.
-3. Always use lowercase table and column names.
-4. Use PostgreSQL syntax only.
-5. DISREGARD is_deleted and is_active columns from respondent and respondent_type_specification tables in your queries unless specified in the question.
-   The user interface will automatically display the data. Your text response should only be a brief summary of what you found, never the raw rows themselves.
-8. Several columns in the database are PostgreSQL enum types, not plain text. 
+2. Always use lowercase table and column names.
+3. Use PostgreSQL syntax only.
+4. DISREGARD is_deleted and is_active columns from respondent and respondent_type_specification tables in your queries unless specified in the question.
+5. Your response should only be a brief summary of what you found, never the raw rows themselves.
+6. Several columns in the database are PostgreSQL enum types, not plain text. 
    These include but are not limited to: country, uk_region, county_state, gender, 
    ethnicity, relationship, job_status, job_title_tier, industry, 
    highest_education_level, annual_household_income, company_size, company_turnover, 
@@ -211,23 +213,20 @@ CRITICAL RULES YOU MUST ALWAYS FOLLOW:
    
    When unsure of the exact enum value, use ILIKE for partial matching instead:
    WHERE column::text ILIKE '%keyword%' This casts the enum to text first which avoids type errors entirely.
-9. ALWAYS qualify every column name with its table alias when writing JOIN queries.
+7. ALWAYS qualify every column name with its table alias when writing JOIN queries.
    Never write SELECT email, SELECT country etc when multiple tables are joined.
    Always write SELECT r.email, SELECT a.country etc.
    This applies to WHERE clauses, ON clauses, GROUP BY, and ORDER BY as well.
    Example: WHERE r.email NOT IN (...) not WHERE email NOT IN (...).
-10.When a question asks for a LIST of people or records, always include at minimum:
-   r.email, r.first_name, r.last_name in the SELECT. Never return email alone 
-   as a list — it is not human readable enough.
-11.When a question asks to COUNT something, return a single aliased column.
+8.When a question asks to COUNT something, return a single aliased column.
     Example: SELECT COUNT(DISTINCT r.email) AS total_respondents
     Never return an unnamed count column.
-12.When joining respondent to addresses, always use LEFT JOIN not INNER JOIN unless 
+9.When joining respondent to addresses, always use LEFT JOIN not INNER JOIN unless 
     the question specifically requires an address field to be present. Many respondents 
     may not have an address record and an INNER JOIN would silently exclude them from 
     counts.
-13.Never use SELECT * in any query. Always specify the columns you need explicitly.
-14. When filtering by date, always use TIMESTAMP WITH TIME ZONE safe comparisons (e.g., column_name >= '2024-01-01'::timestamptz). 
+10.Never use SELECT * in any query. Always specify the columns you need explicitly.
+11. When filtering by date, always use TIMESTAMP WITH TIME ZONE safe comparisons (e.g., column_name >= '2024-01-01'::timestamptz). 
 Use only date columns explicitly listed in the schema.
 """
 
@@ -355,9 +354,9 @@ Rules:
 - Report ONLY what the data shows. Never compare to external benchmarks or real world statistics.
 - If the result is a single value, respond in one short sentence stating just the number.
 - Do not add commentary, caveats, or explanations unless the data is empty.
-- When you run a SQL query that returns data, DO NOT generate a Markdown table of the results in your text response.
-  The user interface will automatically display the data. Your text response should only be a brief summary of what you found, never the raw rows themselves.
+- When you run a SQL query that returns data, DO NOT generate a Markdown table of the results in your text response. Your response should only be a brief summary of what you found, never the raw rows themselves.
 - If no data was returned, say: "No results were found for that question."
+- If a question asked for a LIST of people or records, always provide r.email, r.first_name plus columns used/specified when filtering.
 """),
     ("human", """
 A user asked: "{question}"
