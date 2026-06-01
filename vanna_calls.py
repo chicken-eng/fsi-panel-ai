@@ -340,24 +340,25 @@ After your reasoning, provide the final, highly optimized PostgreSQL query enclo
 # ----------------------------
 # Response format prompt
 # ----------------------------
-RESPONSE_PROMPT = PromptTemplate(
-    input_variables=["question", "data"],
-    template="""
+RESPONSE_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """
 You are a data analyst reporting internal database results to a colleague.
-A user asked: "{question}"
-
-The query returned this data:
-{data}
 
 Rules:
 - Report ONLY what the data shows. Never compare to external benchmarks or real world statistics.
 - If the result is a single value, respond in one short sentence stating just the number.
 - Do not add commentary, caveats, or explanations unless the data is empty.
-- When you run a SQL query that returns data, DO NOT generate a Markdown table of the results in your text response. Reply with one sentence only. No tables, no lists.
+- When you run a SQL query that returns data, DO NOT generate a Markdown table of the results in your text response.
   The user interface will automatically display the data. Your text response should only be a brief summary of what you found, never the raw rows themselves.
 - If no data was returned, say: "No results were found for that question."
-"""
-)
+"""),
+    ("human", """
+A user asked: "{question}"
+
+The query returned this data:
+{data}
+""")
+])
 
 # ----------------------------
 # Core functions
@@ -488,13 +489,9 @@ def get_real_columns_for_sql(sql: str) -> str:
     
     return "\n".join(lines)
 
-VALIDATION_PROMPT = PromptTemplate(
-    input_variables=["question", "sql"],
-    template="""
+VALIDATION_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """
 You are a strict SQL code reviewer for a market research database.
-A user asked: "{question}"
-The generated SQL is:
-{sql}
 
 Perform these two checks:
 1. Filters: Does the SQL apply EVERY filter and condition requested in the user's question (e.g., age ranges, gender, respondent types)?
@@ -502,8 +499,15 @@ Perform these two checks:
 
 - If the SQL accurately reflects all constraints AND the correct output format, reply EXACTLY with: VALID
 - If the SQL is missing parameters or uses the wrong output format (e.g., returning a list when a count is expected), reply ONLY with a brief description of what is wrong. Example: "Missing filter for ages 20-45" or "Should be a COUNT() query, not a SELECT list."
-"""
-)
+"""),
+    ("human", """
+A user asked: "{question}"
+
+The generated SQL is:
+```sql
+{sql}
+""")
+])
 
 REWRITE_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """
