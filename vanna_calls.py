@@ -303,7 +303,7 @@ CONTEXTUALIZE_PROMPT = ChatPromptTemplate.from_messages([
 You are an expert conversational context manager. Your sole job is to review a chat history between a data analyst and a user, look at the latest follow-up statement, and combine them into a single, self-contained, completely unambiguous question.
 
 CRITICAL RULES:
-1. Preserve Aggregation Context: If a previous question asked for a count ("how many", "total"), and the follow-up asks about a different category or subset (e.g., "and hcps?", "what about in the UK?"), you MUST carry over the count intent into the rewritten question. Do NOT change a count request into a list tracking request.
+1. Preserve Aggregation Context: If a previous question asked for a count ("how many", "total"), and the follow-up asks about a different category or subset (e.g., "and hcps?", "how about females?" "what about in the UK?"), you MUST carry over the count intent into the rewritten question. Do NOT change a count request into a list tracking request.
 2. Maintain Existing Filters: If the conversation thread establishes baseline constraints (e.g., active users, specific years), keep those filters active in the rewritten question unless explicitly overridden by the follow-up.
 3. Keep it brief: Output ONLY the completely rewritten standalone question. No markdown code fences, no commentary, no preamble.
 """),
