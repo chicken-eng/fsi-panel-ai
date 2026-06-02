@@ -363,7 +363,7 @@ Follow these steps in order:
 
 STEP 1 — RESOLVE ALL PRONOUNS AND REFERENCES
 Before anything else, scan the follow-up for any pronouns or vague references:
-"them", "they", "those", "it", "these", "the same", "out of those", "out of them", "of them", "those people", etc.
+"them", "they", "those", "it", "these", "the same", "out of those", "out of them", "of them", "those people", "rerun the previous", "try again", "rerun the search", "redo" etc.
 Trace each one back to its referent in the most recent exchange and substitute it explicitly.
 
 Example:
