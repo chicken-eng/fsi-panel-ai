@@ -85,11 +85,6 @@ def get_schema_description() -> str:
                 FROM information_schema.tables 
                 WHERE table_schema = 'public' 
                   AND table_type = 'BASE TABLE'
-                  AND table_name NOT IN (
-                    'staging_emails', 'staging_respondents', 
-                    'staging_projects', 'staging_respondent_projects',
-                    'error_log', 'survey_response'
-                  )
                 ORDER BY table_name
             """))
             tables = [row[0] for row in tables_result]
