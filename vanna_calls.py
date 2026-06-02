@@ -76,6 +76,38 @@ def get_schema_description() -> str:
     """
     Pulls live schema from the database and formats it for the LLM"""
     engine = get_engine()
+
+    # ------------------------------------------------------------
+    # NEON WAKEUP BUFFER
+    # ------------------------------------------------------------
+    max_retries = 5
+    delay = 3
+    db_awake = False
+    
+    for attempt in range(max_retries):
+        try:
+            with engine.connect() as conn:
+                # Execute an ultra-lightweight ping query to force compute spin-up
+                conn.execute(text("SELECT 1"))
+                db_awake = True
+                break
+        except Exception as e:
+            error_str = str(e).lower()
+            is_conn_error = any(keyword in error_str for keyword in [
+                "connection", "timeout", "closed", "ssl", "operationalerror"
+            ])
+            if is_conn_error and attempt < max_retries - 1:
+                # Database is sleeping; wait and try again
+                time.sleep(delay)
+            else:
+                break
+                
+    if not db_awake:
+        st.warning("Database failed to wake up within timeout limit. Using static fallback.")
+        fallback_lines = [STATIC_SCHEMA_FALLBACK, SEMANTIC_GLOSSARY, "", BUSINESS_CONTEXT]
+        return "\n".join(fallback_lines)
+
+    # ------------------------------------------------------------
     
     try:
         with engine.connect() as conn:
