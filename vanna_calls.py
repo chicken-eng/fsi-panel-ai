@@ -721,31 +721,27 @@ def detect_export_request(question: str) -> tuple[bool, str | None, bool]:
 
 def add_export_exclusion_to_sql(sql: str, project_number: str) -> str:
     """
-    Injects a NOT IN subquery into the SQL to exclude emails that have
-    already been exported for this project. The clause is inserted just
-    before ORDER BY or LIMIT (so a LIMIT still applies to the *new* rows).
-    Auto-detects the respondent table alias; falls back to 'r'.
+    Wraps the entire AI-generated query inside a outer subquery block to safely 
+    apply the export suppression rule. This prevents breaking complex queries 
+    like UNIONs or CTEs (WITH clauses) where internal string injection is fragile.
     """
-    # Detect the alias used for the respondent table (e.g. 'r' in FROM respondent r)
-    alias_match = re.search(
-        r'\bFROM\s+respondent\s+(\w+)\b', sql, re.IGNORECASE)
-    alias = alias_match.group(1) if alias_match else 'r'
-
-    exclusion = (
-        f"\n    AND {alias}.email NOT IN (\n"
-        f"        SELECT email FROM export_tracker\n"
-        f"        WHERE project_number = '{project_number}'\n"
-        f"    )"
+    # Clean up any trailing semicolons from the original query
+    cleaned_sql = sql.rstrip(';').rstrip()
+    
+    # Wrap the query and filter the resulting dataset against the tracking table.
+    # Note: This assumes the inner query exposes an 'email' column, which matches
+    # your prompt rules enforcing 'always provide r.email for lists'.
+    wrapped_sql = (
+        f"SELECT * FROM (\n"
+        f"    {cleaned_sql}\n"
+        f") AS final_output\n"
+        f"WHERE final_output.email NOT IN (\n"
+        f"    SELECT email FROM export_tracker\n"
+        f"    WHERE project_number = '{project_number.lower()}'\n"
+        f")"
     )
-
-    # Insert before ORDER BY or LIMIT so user-specified LIMITs apply to new rows
-    terminator = re.search(r'\b(ORDER\s+BY|LIMIT)\b', sql, re.IGNORECASE)
-    if terminator:
-        pos = terminator.start()
-        return sql[:pos] + exclusion + '\n' + sql[pos:]
-
-    # No terminator found — append before any trailing semicolon
-    return sql.rstrip(';').rstrip() + exclusion
+    
+    return wrapped_sql
 
 
 def extract_filters_from_sql(sql: str) -> str:
@@ -906,7 +902,8 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
             st.error("Could not generate a valid SQL query.")
             return None, None
 
-        if not sql.lower().startswith("select"):
+        valid_sql_starts = ("select", "with", "(", "--", "/*")
+        if not sql.lower().startswith(valid_sql_starts):
             st.info("No database query required for this message.")
             # We return the conversational text as 'sql', but df as None.
             return sql, None
@@ -1145,7 +1142,10 @@ def generate_sql_cached(question: str, history: list = None):
 
 @st.cache_data(show_spinner="Checking for valid SQL ...")
 def is_sql_valid_cached(sql: str):
-    return sql is not None and sql.strip().lower().startswith("select")
+    if not sql:
+        return False
+    valid_sql_starts = ("select", "with", "(", "--", "/*")
+    return sql.strip().lower().startswith(valid_sql_starts)
 
 
 @st.cache_data(show_spinner="Running SQL query ...")
