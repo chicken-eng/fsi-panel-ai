@@ -284,7 +284,8 @@ CRITICAL RULES YOU MUST ALWAYS FOLLOW:
 8. Never use SELECT * in any query. Always specify the columns you need explicitly.
 9. When filtering by date, always use TIMESTAMP WITH TIME ZONE safe comparisons (e.g., column_name >= '2024-01-01'::timestamptz). 
    Use only date columns explicitly listed in the schema.
-10.EXPORT PROJECT CLAUSES: When a user requests an "export" for a specific project number (e.g., "export ... for project FSIXXXX"), DO NOT filter the SQL query using `p.project_number = '...'` or join the `projects`/`project_respondent` tables based on that project ID. The project code in export strings is captured by an external application layer for tracking/suppression and must NOT limit the target audience data pool unless the prompt explicitly says the respondents "participated in", "took part in", or "applied to" that specific project.
+10. If a question asked for a LIST, Export, Selection of people or records, always provide r.email, r.first_name plus ALL columns used for filtering.
+11.EXPORT PROJECT CLAUSES: When a user requests an "export" for a specific project number (e.g., "export ... for project FSIXXXX"), DO NOT filter the SQL query using `p.project_number = '...'` or join the `projects`/`project_respondent` tables based on that project ID. The project code in export strings is captured by an external application layer for tracking/suppression and must NOT limit the target audience data pool unless the prompt explicitly says the respondents "participated in", "took part in", or "applied to" that specific project.
 """
 
 STATIC_SCHEMA_FALLBACK = """
@@ -434,7 +435,7 @@ Rules:
 - Do not add commentary, caveats, or explanations unless the data is empty.
 - When you run a SQL query that returns data, DO NOT generate a Markdown table of the results in your text response. Your response should only be a brief summary of what you found, never the raw rows themselves.
 - If no data was returned, say: "No results were found for that question."
-- If a question asked for a LIST of people or records, always provide r.email, r.first_name plus columns used/specified when filtering.
+- The email must always be unique when asked for a list. If the email is associated with multiple values within a single column, the values must be merged and seperated by a ';'. 
 """),
     ("human", """
 A user asked: "{question}"
