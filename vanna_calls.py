@@ -810,8 +810,7 @@ def insert_export_tracking(
         "DO UPDATE SET filters = EXCLUDED.filters, datetimestamp = EXCLUDED.datetimestamp"
         if is_override else "DO NOTHING"
     )
-    rows = [{"email": e, "pn": project_number, "filters": filters_str}
-            for e in emails]
+   
     engine = get_engine()
 
     try:
@@ -822,7 +821,7 @@ def insert_export_tracking(
                     VALUES (:email, :pn, :filters, NOW() AT TIME ZONE 'UTC')
                     ON CONFLICT (email, project_number) {conflict}
                 """),
-                rows,
+                {"emails": emails, "pn": project_number, "filters": filters_str}
             )
             conn.commit()
     except Exception as e:
@@ -856,8 +855,9 @@ def _handle_export_tracking(
 
     emails = df[email_col].dropna().unique().tolist()
     filters_str = extract_filters_from_sql(sql)
-    written = insert_export_tracking(
-        emails, project_number, filters_str, is_override)
+
+    with st.spinner(f"Tracking {len(emails)} records for project {project_number.upper()}..."):
+        written = insert_export_tracking(emails, project_number, filters_str, is_override)
 
     action = "exported / refreshed" if is_override else "newly exported"
     skipped = len(emails) - written if not is_override else 0
