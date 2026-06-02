@@ -12,6 +12,8 @@ from collections import defaultdict
 # ----------------------------
 # Database connection
 # ----------------------------
+
+
 @st.cache_resource
 def get_engine():
     url = (
@@ -24,6 +26,8 @@ def get_engine():
 # ----------------------------
 # LLM Configuration
 # ----------------------------
+
+
 @st.cache_resource
 def get_llm():
     return ChatGroq(
@@ -31,6 +35,7 @@ def get_llm():
         groq_api_key=st.secrets["GROQ_API_KEY"],
         temperature=0
     )
+
 
 SEMANTIC_GLOSSARY = """
 SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
@@ -71,6 +76,29 @@ SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
   - Whenever a search/request inclued cities always us ILIKE for partial matching instead of searching using the actual value in the question.
 """
 
+# ----------------------------
+# Export Tracking Configuration
+# ----------------------------
+EXPORT_KEYWORD_PATTERN = re.compile(r'\bexport(s|ing|ed)?\b', re.IGNORECASE)
+PROJECT_NUMBER_PATTERN = re.compile(r'\bfsi[a-z0-9]{4,}\b',  re.IGNORECASE)
+
+# Phrases that bypass the duplicate-exclusion filter.
+# NOTE: these do NOT delete existing export_tracker rows — they only
+# include already-exported emails in the current result and refresh
+# their datetimestamp. Add a DELETE helper if hard-reset is needed.
+EXPORT_OVERRIDE_PHRASES = [
+    "disregard previous export",
+    "ignore previous export",
+    "include everyone even if already exported",
+    "include all even if exported",
+    "include previously exported",
+    "reset tracking for project",
+    "re-export",
+    "override export",
+    "export all including previous",
+]
+
+
 @st.cache_resource
 def get_schema_description() -> str:
     """
@@ -83,7 +111,7 @@ def get_schema_description() -> str:
     max_retries = 5
     delay = 3
     db_awake = False
-    
+
     for attempt in range(max_retries):
         try:
             with engine.connect() as conn:
@@ -101,14 +129,16 @@ def get_schema_description() -> str:
                 time.sleep(delay)
             else:
                 break
-                
+
     if not db_awake:
-        st.warning("Database failed to wake up within timeout limit. Using static fallback.")
-        fallback_lines = [STATIC_SCHEMA_FALLBACK, SEMANTIC_GLOSSARY, "", BUSINESS_CONTEXT]
+        st.warning(
+            "Database failed to wake up within timeout limit. Using static fallback.")
+        fallback_lines = [STATIC_SCHEMA_FALLBACK,
+                          SEMANTIC_GLOSSARY, "", BUSINESS_CONTEXT]
         return "\n".join(fallback_lines)
 
     # ------------------------------------------------------------
-    
+
     try:
         with engine.connect() as conn:
             # 1. Get all tables in public schema
@@ -120,7 +150,7 @@ def get_schema_description() -> str:
                 ORDER BY table_name
             """))
             tables = [row[0] for row in tables_result]
-            
+
             # 2. Get columns + constraints for each table
             cols_result = conn.execute(text("""
                 SELECT 
@@ -141,7 +171,7 @@ def get_schema_description() -> str:
                   AND cols.table_name = ANY(:tables)
                 ORDER BY cols.table_name, cols.ordinal_position
             """), {"tables": tables})
-            
+
             # 3. Group columns by table
             table_cols = defaultdict(list)
             for row in cols_result:
@@ -183,7 +213,7 @@ def get_schema_description() -> str:
                 relationships[from_table].append(
                     f"{from_col} → {to_table}.{to_col}"
                 )
-            
+
             # 4. Build a compact schema string
             schema_lines = [
                 "We have a PostgreSQL database that contains the following tables:\n",
@@ -195,22 +225,24 @@ def get_schema_description() -> str:
                 schema_lines.append(f"TABLE: {table}")
                 schema_lines.append(f"  Columns: {', '.join(cols)}")
                 if relationships.get(table):
-                    schema_lines.append(f"  Foreign keys: {', '.join(relationships[table])}")
+                    schema_lines.append(
+                        f"  Foreign keys: {', '.join(relationships[table])}")
                 schema_lines.append("")
-            
+
             schema_lines.append("RELATIONSHIPS SUMMARY:")
-            schema_lines.append("Tables that have no declared FK but join via email: use r.email = other_table.email")
+            schema_lines.append(
+                "Tables that have no declared FK but join via email: use r.email = other_table.email")
             schema_lines.append("")
             schema_lines.append(SEMANTIC_GLOSSARY)
             schema_lines.append("")
             schema_lines.append(BUSINESS_CONTEXT)
-            
+
             return "\n".join(schema_lines)
-            
+
     except Exception as e:
         # Fall back to static description if DB is unreachable
         st.warning(f"Could not load live schema, using static fallback: {e}")
-        
+
         fallback_lines = [
             STATIC_SCHEMA_FALLBACK,
             SEMANTIC_GLOSSARY,
@@ -218,7 +250,8 @@ def get_schema_description() -> str:
             BUSINESS_CONTEXT
         ]
         return "\n".join(fallback_lines)
-        
+
+
 # ----------------------------
 # Schema context
 # ----------------------------
@@ -450,6 +483,8 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
 # ----------------------------
 # Core functions
 # ----------------------------
+
+
 def _parse_history(history) -> list:
     """Safely coerces standard session elements into strictly typed LangChain Message objects."""
     if not history:
@@ -473,24 +508,27 @@ def _parse_history(history) -> list:
             parsed.append(msg)
     return parsed
 
+
 def extract_sql_from_cot(llm_response: str) -> str:
     """
     Extracts the SQL query from the LLM's response, ignoring the reasoning.
     Looks specifically for markdown SQL blocks.
     """
     # Primary match: look for ```sql [query] ```
-    match = re.search(r"```sql\n(.*?)\n```", llm_response, re.DOTALL | re.IGNORECASE)
+    match = re.search(r"```sql\n(.*?)\n```", llm_response,
+                      re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
-    
+
     # Fallback match: in case the LLM forgets the 'sql' tag and just uses ```
     match_fallback = re.search(r"```(.*?)```", llm_response, re.DOTALL)
     if match_fallback:
         return match_fallback.group(1).strip()
-        
-    # Failsafe: If no markdown is found, return the raw response 
+
+    # Failsafe: If no markdown is found, return the raw response
     # (Though with our prompt, this should rarely happen)
     return llm_response.strip()
+
 
 def validate_sql_intent(question: str, sql: str) -> str:
     """Checks if the generated SQL dropped any user parameters."""
@@ -499,35 +537,37 @@ def validate_sql_intent(question: str, sql: str) -> str:
     result = chain.invoke({"question": question, "sql": sql}).content.strip()
     return result
 
+
 def is_complex_query(question: str) -> bool:
     """
     Evaluates the user's question to determine if it requires Chain-of-Thought reasoning.
     Zero-token heuristic based on word count and complexity keywords.
     """
     q_lower = question.lower()
-    
+
     # Keywords that imply multi-table joins, date filtering, or complex aggregations
     complexity_indicators = [
         "between", "average", "ratio", "compare", "trend", "month", "year",
-        "both", "multiple", "except", "without", "versus", "vs", "most", 
+        "both", "multiple", "except", "without", "versus", "vs", "most",
         "least", "top", "bottom", "percentage", "group by"
     ]
-    
+
     # Route to CoT if the question is heavily constrained (long)
     if len(q_lower.split()) > 15:
         return True
-        
+
     # Route to CoT if it hits any complexity keywords
     if any(word in q_lower for word in complexity_indicators):
         return True
-        
+
     return False
+
 
 def run_query(sql: str, max_retries: int = 5, delay: int = 3) -> pd.DataFrame | None:
     """Runs the query with a retry loop to handle Neon's cold starts."""
     engine = get_engine()
     df = None  # Initialize df here
-    
+
     # st.status provides a spinner UI that we can update text for dynamically
     with st.status("Connecting to database...", expanded=True) as status:
         for attempt in range(max_retries):
@@ -536,19 +576,20 @@ def run_query(sql: str, max_retries: int = 5, delay: int = 3) -> pd.DataFrame | 
                     status.update(label="Executing query...", state="running")
                     result = conn.execute(text(sql))
                     df = pd.DataFrame(result.fetchall(), columns=result.keys())
-                    status.update(label="Query successful!", state="complete", expanded=False)
+                    status.update(label="Query successful!",
+                                  state="complete", expanded=False)
                     break  # Exit the retry loop gracefully instead of returning early
-                    
+
             except Exception as e:
                 error_str = str(e).lower()
                 # Check if the error is likely due to the database being asleep
                 is_conn_error = any(keyword in error_str for keyword in [
                     "connection", "timeout", "closed", "ssl", "operationalerror"
                 ])
-                
+
                 if is_conn_error and attempt < max_retries - 1:
                     status.update(
-                        label=f"Waking up database... (Attempt {attempt + 1} of {max_retries})", 
+                        label=f"Waking up database... (Attempt {attempt + 1} of {max_retries})",
                         state="running"
                     )
                     time.sleep(delay)  # Wait a few seconds before trying again
@@ -558,9 +599,10 @@ def run_query(sql: str, max_retries: int = 5, delay: int = 3) -> pd.DataFrame | 
                     st.session_state["last_sql_error"] = str(e)
                     st.error(f"SQL execution error: {e}")
                     break  # Also break here on complete failure
-                    
+
     # Return df OUTSIDE the context manager so Streamlit fully closes the UI status
     return df
+
 
 def get_column_samples(sql: str) -> str:
     """Looks at the SQL, finds the tables used, and fetches distinct values for text columns."""
@@ -598,7 +640,8 @@ def get_column_samples(sql: str) -> str:
                             """))
                             values = [str(row[0]) for row in val_result]
                             if values:
-                                samples.append(f"{table}.{col}: {', '.join(values)}")
+                                samples.append(
+                                    f"{table}.{col}: {', '.join(values)}")
                         except:
                             pass
                 except:
@@ -608,6 +651,7 @@ def get_column_samples(sql: str) -> str:
 
     return "\n".join(samples)
 
+
 def get_real_columns_for_sql(sql: str) -> str:
     """
     Given a SQL string, extracts all table names referenced and returns
@@ -615,7 +659,7 @@ def get_real_columns_for_sql(sql: str) -> str:
     """
     engine = get_engine()
     lines = []
-    
+
     # Extract table names from FROM and JOIN clauses
     words = sql.lower().split()
     tables = []
@@ -624,10 +668,10 @@ def get_real_columns_for_sql(sql: str) -> str:
             candidate = words[i + 1].strip("(),;")
             if candidate and not candidate.startswith("(") and not candidate.startswith("select"):
                 tables.append(candidate)
-    
+
     if not tables:
         return ""
-    
+
     try:
         with engine.connect() as conn:
             for table in set(tables):
@@ -641,23 +685,198 @@ def get_real_columns_for_sql(sql: str) -> str:
                     """), {"table": table})
                     cols = [f"{row[0]} ({row[1]})" for row in result]
                     if cols:
-                        lines.append(f"Table '{table}' has these columns: {', '.join(cols)}")
+                        lines.append(
+                            f"Table '{table}' has these columns: {', '.join(cols)}")
                 except Exception:
                     pass
     except Exception:
         pass
-    
+
     return "\n".join(lines)
 
 # ----------------------------
 # Execution Pipeline
 # ----------------------------
 
+
+def detect_export_request(question: str) -> tuple[bool, str | None, bool]:
+    """
+    Checks whether the question is a tracked export request.
+    Returns: (is_export, project_number, is_override)
+    """
+    has_export = bool(EXPORT_KEYWORD_PATTERN.search(question))
+    project_match = PROJECT_NUMBER_PATTERN.search(question)
+    project_number = project_match.group(0).lower() if project_match else None
+    is_export = has_export and project_number is not None
+
+    is_override = False
+    if is_export:
+        q_lower = question.lower()
+        is_override = any(
+            phrase in q_lower for phrase in EXPORT_OVERRIDE_PHRASES)
+
+    return is_export, project_number, is_override
+
+
+def add_export_exclusion_to_sql(sql: str, project_number: str) -> str:
+    """
+    Injects a NOT IN subquery into the SQL to exclude emails that have
+    already been exported for this project. The clause is inserted just
+    before ORDER BY or LIMIT (so a LIMIT still applies to the *new* rows).
+    Auto-detects the respondent table alias; falls back to 'r'.
+    """
+    # Detect the alias used for the respondent table (e.g. 'r' in FROM respondent r)
+    alias_match = re.search(
+        r'\bFROM\s+respondent\s+(\w+)\b', sql, re.IGNORECASE)
+    alias = alias_match.group(1) if alias_match else 'r'
+
+    exclusion = (
+        f"\n    AND {alias}.email NOT IN (\n"
+        f"        SELECT email FROM export_tracker\n"
+        f"        WHERE project_number = '{project_number}'\n"
+        f"    )"
+    )
+
+    # Insert before ORDER BY or LIMIT so user-specified LIMITs apply to new rows
+    terminator = re.search(r'\b(ORDER\s+BY|LIMIT)\b', sql, re.IGNORECASE)
+    if terminator:
+        pos = terminator.start()
+        return sql[:pos] + exclusion + '\n' + sql[pos:]
+
+    # No terminator found — append before any trailing semicolon
+    return sql.rstrip(';').rstrip() + exclusion
+
+
+def extract_filters_from_sql(sql: str) -> str:
+    """
+    Extracts the WHERE clause from the SQL and strips standard boilerplate
+    (unsubscribe blacklist, export exclusion) to isolate the user's filters.
+    Stored in export_tracker.filters for audit purposes.
+    """
+    match = re.search(
+        r'\bWHERE\b(.*?)(?:\bGROUP\s+BY\b|\bORDER\s+BY\b|\bLIMIT\b|\bHAVING\b|$)',
+        sql,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return ""
+
+    clause = match.group(1).strip()
+
+    # Remove unsubscribe blacklist boilerplate
+    clause = re.sub(
+        r'AND\s+\S+\.?email\s+NOT\s+IN\s*\(\s*SELECT\s+email\s+FROM\s+unsubscribe_blacklist\s*\)',
+        '', clause, flags=re.IGNORECASE,
+    )
+    # Remove the export_tracker exclusion we injected
+    clause = re.sub(
+        r'AND\s+\S+\.?email\s+NOT\s+IN\s*\(\s*SELECT\s+email\s+FROM\s+export_tracker[^)]*\)',
+        '', clause, flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    clause = re.sub(r'\s+', ' ', clause).strip().strip('AND').strip()
+    return clause[:1000]
+
+
+def get_already_exported_count(project_number: str) -> int:
+    """Total emails already tracked in export_tracker for a given project."""
+    engine = get_engine()
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT COUNT(*) FROM export_tracker WHERE project_number = :pn"),
+                {"pn": project_number},
+            )
+            return result.scalar() or 0
+    except Exception as e:
+        st.warning(f"Could not query export_tracker: {e}")
+        return 0
+
+
+def insert_export_tracking(
+    emails: list[str],
+    project_number: str,
+    filters_str: str,
+    is_override: bool = False,
+) -> int:
+    """
+    Bulk-inserts emails into export_tracker.
+    - Normal  : ON CONFLICT DO NOTHING. SQL already excluded duplicates, so
+                all rows in `emails` should be genuinely new.
+    - Override: ON CONFLICT DO UPDATE to refresh datetimestamp and filters.
+    Returns the number of emails processed.
+    """
+    if not emails:
+        return 0
+
+    conflict = (
+        "DO UPDATE SET filters = EXCLUDED.filters, datetimestamp = EXCLUDED.datetimestamp"
+        if is_override else "DO NOTHING"
+    )
+    rows = [{"email": e, "pn": project_number, "filters": filters_str}
+            for e in emails]
+    engine = get_engine()
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(
+                text(f"""
+                    INSERT INTO export_tracker (email, project_number, filters, datetimestamp)
+                    VALUES (:email, :pn, :filters, NOW() AT TIME ZONE 'UTC')
+                    ON CONFLICT (email, project_number) {conflict}
+                """),
+                rows,
+            )
+            conn.commit()
+    except Exception as e:
+        st.error(f"Export tracking insert failed: {e}")
+        return 0
+
+    return len(emails)
+
+
+def _handle_export_tracking(
+    sql: str,
+    df,
+    project_number: str | None,
+    is_export: bool,
+    is_override: bool,
+) -> None:
+    """
+    Called at every return point in generate_sql_with_retry.
+    Inserts export rows and displays a summary banner when conditions are met.
+    Silently skips when the query is not an export or returned no emails.
+    """
+    if not is_export or not project_number or df is None or df.empty:
+        return
+
+    # Tolerate any column that contains 'email' (e.g. 'email', 'recipient_email')
+    email_col = next((c for c in df.columns if 'email' in c.lower()), None)
+    if email_col is None:
+        st.warning(
+            "⚠️ Export detected but result has no email column — tracking skipped.")
+        return
+
+    emails = df[email_col].dropna().unique().tolist()
+    filters_str = extract_filters_from_sql(sql)
+    written = insert_export_tracking(
+        emails, project_number, filters_str, is_override)
+
+    action = "exported / refreshed" if is_override else "newly exported"
+    skipped = len(emails) - written if not is_override else 0
+
+    msg = f"📤 **Export Tracker** — `{project_number}`: **{written}** email(s) {action}."
+    if skipped > 0:
+        msg += f" _{skipped} skipped (already tracked)._"
+    st.success(msg)
+
+
 def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | None, pd.DataFrame | None]:
     """Generates SQL, validates intent, runs it, and handles DB retries."""
 
     parsed_history = _parse_history(history)
-    
+    is_export, project_number, is_override = False, None, False
+
     with st.expander("🔍 Query Process", expanded=True):
         # Step 0: Context Condensation Layer
         st.markdown("**Step 0: Synchronizing Context ...**")
@@ -670,34 +889,39 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
             }).content.strip()
 
             if condensed_question != question:
-                st.info(f"🔄 Rephrased contextually to: *\"{condensed_question}\"*")
+                st.info(
+                    f"🔄 Rephrased contextually to: *\"{condensed_question}\"*")
                 question = condensed_question
         else:
             st.info("🆕 Fresh chat thread started.")
-    
+        is_export, project_number, is_override = detect_export_request(
+            question)
+
         # Step 1
         st.markdown("**Step 1: Generating SQL...**")
         sql = generate_sql(question, history=history)
-        
+
         if not sql:
             st.error("Could not generate a valid SQL query.")
             return None, None
-            
+
         if not sql.lower().startswith("select"):
             st.info("No database query required for this message.")
             # We return the conversational text as 'sql', but df as None.
             return sql, None
-        
+
         st.code(sql, language="sql")
 
         # Step 2: Validate Intent
         st.markdown("**Step 2: Validating Query Intent...**")
         validation_result = validate_sql_intent(question, sql)
-        
+
         if validation_result != "VALID":
-            st.warning(f"⚠️ Code Reviewer flagged an issue: {validation_result}")
-            st.markdown("**Step 2.5: Rewriting SQL to include missing parameters...**")
-            
+            st.warning(
+                f"⚠️ Code Reviewer flagged an issue: {validation_result}")
+            st.markdown(
+                "**Step 2.5: Rewriting SQL to include missing parameters...**")
+
             # Run the targeted rewrite
             llm = get_llm()
             chain = REWRITE_PROMPT | llm
@@ -708,27 +932,49 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
                 "bad_sql": sql,
                 "missing_logic": validation_result
             }).content.strip()
-            
+
             st.code(sql, language="sql")
         else:
             st.info("✅ Query passed intent validation.")
-        
+
+        # --- Export Tracking: modify SQL before execution ---
+        if is_export and not is_override:
+            already_count = get_already_exported_count(project_number)
+            st.markdown(
+                "**Export Tracking: Excluding previously exported emails...**")
+            if already_count > 0:
+                st.info(
+                    f"ℹ️ {already_count} previously exported email(s) for "
+                    f"`{project_number}` will be excluded from this run."
+                )
+            sql = add_export_exclusion_to_sql(sql, project_number)
+            st.markdown("**Modified SQL (export exclusion applied):**")
+            st.code(sql, language="sql")
+        elif is_export and is_override:
+            st.info(
+                f"🔄 Export override active — all matching emails will be "
+                f"included for `{project_number}`."
+            )
+
         # Step 3
         st.markdown("**Step 3: Running query...**")
         df = run_query(sql)
         sql_error = st.session_state.pop("last_sql_error", None)
-        
+
         if df is not None and not df.empty:
             st.success(f"Query returned {len(df)} row(s). No retry needed.")
+            _handle_export_tracking(
+                sql, df, project_number, is_export, is_override)
             return sql, df
-        
+
         # Step 4 — retry
         if (df is not None and df.empty) or (df is None and sql_error):
-            
+
             if sql_error and "undefinedcolumn" in sql_error.lower():
-                st.warning("⚠️ Query used a column that doesn't exist. Fetching real column names...")
+                st.warning(
+                    "⚠️ Query used a column that doesn't exist. Fetching real column names...")
                 st.markdown("**Step 4: Injecting real column inventory...**")
-            
+
                 # Extract the offending table from the error or from the SQL
                 real_columns = get_real_columns_for_sql(sql)
 
@@ -763,10 +1009,10 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                         "real_columns": real_columns,
                         "error": sql_error
                     }).content.strip()
-                
+
                     st.markdown("**Step 4: Retried SQL:**")
                     st.code(sql, language="sql")
-                    
+
                     df = run_query(sql)
                     sql_error = st.session_state.pop("last_sql_error", None)
                     if df is not None and not df.empty:
@@ -775,6 +1021,8 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                         st.error(f"Retry also failed: {sql_error}")
                     else:
                         st.info("Retry ran but returned 0 results.")
+                    _handle_export_tracking(
+                        sql, df, project_number, is_export, is_override)
                     return sql, df
 
             # --- Branch B: Zero results — inject real enum values ---
@@ -782,16 +1030,17 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                 if sql_error:
                     st.warning(f"⚠️ Query failed: {sql_error}")
                 else:
-                    st.warning("⚠️ Query returned 0 results. Checking actual stored values...")
-                
+                    st.warning(
+                        "⚠️ Query returned 0 results. Checking actual stored values...")
+
                 st.markdown("**Step 3: Fetching column value samples...**")
                 samples = get_column_samples(sql)
-                
+
                 if samples:
                     # Don't dump raw samples to UI — just confirm we got them
                     st.info("✅ Retrieved column value samples for retry.")
                     st.markdown("**Step 4: Retrying with correct values...**")
-                    
+
                     llm = get_llm()
                     retry_prompt = ChatPromptTemplate.from_messages([
                         ("system", """
@@ -817,10 +1066,10 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                         "bad_sql": sql,
                         "samples": samples
                     }).content.strip()
-                    
+
                     st.markdown("**Step 4: Retried SQL:**")
                     st.code(sql, language="sql")
-                    
+
                     df = run_query(sql)
                     sql_error = st.session_state.pop("last_sql_error", None)
                     if df is not None and not df.empty:
@@ -831,47 +1080,53 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                         st.info("Retry ran but returned 0 results.")
                 else:
                     st.warning("Could not fetch column samples for retry.")
-    
+
+    _handle_export_tracking(sql, df, project_number, is_export, is_override)
     return sql, df
+
 
 def generate_sql(question: str, history: list = None) -> str | None:
     """Generates SQL using CoT reasoning and structured chat history."""
     if history is None:
         history = []
-    
+
     llm = get_llm()
-    
+
     # 1. Evaluate complexity
     requires_cot = is_complex_query(question)
-    
+
     # 2. Route to the correct prompt
     prompt_template = COMPLEX_SQL_PROMPT if requires_cot else SIMPLE_SQL_PROMPT
     chain = prompt_template | llm
 
-    try:  
+    try:
         raw_response = chain.invoke({
             "schema": get_schema_description(),
             "history": history,
             "question": question
         }).content
-        
+
         # Strip out the reasoning, leaving only the executable SQL
         clean_sql = extract_sql_from_cot(raw_response)
         return clean_sql
-        
+
     except Exception as e:
         st.error(f"Error generating SQL: {e}")
         return None
 
+
 def generate_response(question: str, df: pd.DataFrame) -> str | None:
     llm = get_llm()
     chain = RESPONSE_PROMPT | llm
-    data_str = df.to_string(index=False) if df is not None else "No data returned."
+    data_str = df.to_string(
+        index=False) if df is not None else "No data returned."
     return chain.invoke({"question": question, "data": data_str}).content
 
 # ----------------------------
 # Interface Compatibility Stubs
 # ----------------------------
+
+
 def generate_questions_cached():
     return [
         "How many active respondents do we have?",
@@ -882,28 +1137,36 @@ def generate_questions_cached():
         "How many respondents have unsubscribed?",
     ]
 
+
 def generate_sql_cached(question: str, history: list = None):
     return generate_sql_with_retry(question, history=history)
+
 
 @st.cache_data(show_spinner="Checking for valid SQL ...")
 def is_sql_valid_cached(sql: str):
     return sql is not None and sql.strip().lower().startswith("select")
 
+
 @st.cache_data(show_spinner="Running SQL query ...")
 def run_sql_cached(sql: str):
     return run_query(sql)
 
+
 def should_generate_chart_cached(question, sql, df):
     return False  # charts dropped for prototype
+
 
 def generate_plotly_code_cached(question, sql, df):
     return None
 
+
 def generate_plot_cached(code, df):
     return None
 
+
 def generate_followup_cached(question, sql, df):
     return []
+
 
 @st.cache_data(show_spinner="Generating summary ...")
 def generate_summary_cached(question, df):
