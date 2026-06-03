@@ -534,7 +534,7 @@ def extract_sql_from_cot(llm_response: str) -> str:
     return llm_response.strip()
 
 
-def validate_sql_intent(question: str, sql: str) -> str:
+def validate_sql_intent(question: str, sql: str, is_export: bool = False) -> str:
     """Checks if the generated SQL dropped any user parameters."""
     llm = get_llm()
     chain = VALIDATION_PROMPT | llm
