@@ -60,7 +60,7 @@ SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
    - When asked about when a respondent was last active in relation to a project filter via last_activity_date from project_respondent table.
 
 5. PROJECTS
-   - Words like participate, took part, applied, will be used in relation to projects. When asked such question filter via project_respondent and projects tables.
+   - Words like participate, took part, applied, exclude, remove, disregard, will be used in relation to projects. When asked such question filter via project_respondent and projects tables.
    - If the question about a project requires a date or date range use the last_activity_date to filter.
 
 6.ETHNICITY
