@@ -280,8 +280,6 @@ DETERMINISTIC EXECUTION RULES:
 7. Connect `respondent` to `addresses` utilizing a LEFT JOIN configuration. Reserve INNER JOIN configurations strictly for instances where the prompt introduces mandatory structural address boundaries.
 8. Explicitly declare every requested column name individually in the SELECT clause. Avoid using wildcard operators like `*`.
 9. Validate date filter comparisons using TIMESTAMP WITH TIME ZONE notation patterns (e.g., `column_name >= '2024-01-01'::timestamptz`). Restrict operations to explicit date columns documented in the physical dictionary.
-10. Format listings, exports, or data collections to explicitly return `r.email`, `r.first_name`, and all operational attributes actively engaged in filtering constraints.
-11. AUDIENCE CAPTURE EXPORT SCENARIOS: General export strings containing a standalone project identifier (e.g., "export ... for project FSIXXXX") dictate broad target audience selections. Keep the audience scope open by omitting project mapping constraints (`p.project_number`) or project history joins unless the prompt introduces explicit participation phrases like "participated in", "took part in", or "applied to".
 """
 
 STATIC_SCHEMA_FALLBACK = """
@@ -426,8 +424,6 @@ Rules:
 - Omit commentary, caveats, or explanations unless the data is empty.
 - If no data is returned, output exactly: "No results were found for that question."
 - When providing a list, ensure each email is unique. If an email has multiple associated values in a single column, merge those values and ensure they are separated by a ';'.
-
-CRITICAL RULE: If a question asked for a List, Export, Overall a selection of people or records, always provide r.email, r.first_name plus ALL columns used for filtering.
 """),
     ("human", """
 A user asked: "{question}"
@@ -481,6 +477,13 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
     MessagesPlaceholder(variable_name="history"),
     ("human", "{question}")
 ])
+
+EXPORT_POLICIES = """
+### EXPORT & LISTING OVERRIDES
+[CRITICAL] The user has explicitly requested a data export, list, or detailed audience extraction. You MUST adhere to these overrides:
+1. Output Format: You MUST explicitly select `r.email`, `r.first_name`, `r.last_name`, and all operational attributes actively engaged in filtering constraints. NEVER use COUNT() for this query.
+2. Audience Capture Strategy: If the request contains a standalone project identifier (e.g., "export for project FSIXXXX") without explicit participation verbs (e.g., "participated in"), keep the audience scope broad. Do NOT constrain the query with an inner join to project history tables.
+"""
 
 # ----------------------------
 # Core functions
@@ -930,7 +933,7 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
 
         # Step 1
         st.markdown("**Step 1: Generating SQL...**")
-        sql = generate_sql(question, history=history)
+        sql = generate_sql(question, history=history, is_export=is_export)
 
         if not sql:
             st.error("Could not generate a valid SQL query.")
@@ -1117,7 +1120,7 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
     return sql, df
 
 
-def generate_sql(question: str, history: list = None) -> str | None:
+def generate_sql(question: str, history: list = None, is_export: bool = False) -> str | None:
     """Generates SQL using CoT reasoning and structured chat history."""
     if history is None:
         history = []
@@ -1129,11 +1132,16 @@ def generate_sql(question: str, history: list = None) -> str | None:
 
     # 2. Route to the correct prompt
     prompt_template = COMPLEX_SQL_PROMPT if requires_cot else SIMPLE_SQL_PROMPT
+    
+    system_prompt = get_schema_description()
+    if is_export:
+        system_prompt += f"\n\n{EXPORT_POLICIES}"
+        
     chain = prompt_template | llm
 
     try:
         raw_response = chain.invoke({
-            "schema": get_schema_description(),
+            "schema": system_prompt,
             "history": history,
             "question": question
         }).content
