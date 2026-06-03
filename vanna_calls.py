@@ -38,44 +38,41 @@ def get_llm():
 
 
 SEMANTIC_GLOSSARY = """
-SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
-1. RESPONDENT TYPES (Filter via respondent_type_specification and respondent_type tables):
+SEMANTIC TRANSLATION GLOSSARY (Mappings for human terms to database elements):
+1. RESPONDENT TYPES (Scoping via respondent_type_specification and respondent_type tables):
    - Variations of "Consumer" -> respondent_type.type_name = 'Consumer'
    - Variations of "HCP" -> respondent_type.type_name = 'HCP'
    - Variations of "Patient" or "Caregiver" -> respondent_type.type_name = 'Patient/Caregiver'
    - Variations of "B2B" or "Business Respondent" -> respondent_type.type_name = 'B2B'
 
-2. CALCULATING AGE:
-   - "Age" or "Ages between X and Y" is NEVER a column. You must ALWAYS calculate it dynamically from r.date_of_birth using PostgreSQL AGE function.
-   - Example for age 20-45: EXTRACT(YEAR FROM AGE(NOW(), r.date_of_birth)) BETWEEN 20 AND 45
+2. DYNAMIC AGE DERIVATION:
+   - Querying for age or age ranges requires dynamic calculation from the date of birth field using the PostgreSQL AGE function.
+   - Execution Template for an age constraint (e.g., ages 20 to 45): EXTRACT(YEAR FROM AGE(NOW(), r.date_of_birth)) BETWEEN 20 AND 45
 
-3. HEALTHCARE PROFFESIONALS
-   - Terms like "Physician", "Nurse", "Surgeon", "Pharmacist", "Technician", "Dentist", "Midwife", "Admin", "Manager", "Student", "Research/Laboratory", "Retired",
-   are all HCP job titles (Filter via respondent_hcp_job_title and hcp_job_title tables). 
-   - Any other values mentioned during a HCP search e.g. 'Oncology' is a specialty and must be filtered through respondent_hcp_specialty and hcp_job_specialty tables. 
+3. HEALTHCARE PROFESSIONALS:
+   - Map terms like "Physician", "Nurse", "Surgeon", "Pharmacist", "Technician", "Dentist", "Midwife", "Admin", "Manager", "Student", "Research/Laboratory", "Retired" to HCP job titles using the respondent_hcp_job_title and hcp_job_title tables.
+   - Map clinical sub-domains, specialties, or medical topics (e.g., 'Oncology') to HCP specialties using the respondent_hcp_specialty and hcp_job_specialty tables.
 
-4. DATES
-   - When asked about when a respondent was created, made, first appeared etc filter using created_date from respondent_type_specification table. You will find multiple create_dates if respondent has different types, in this case take the oldest date.
-   - When asked about when a respondent was last active filter via update_date from respondent_type_specification table. You will find multiple update_dates if respondent has different types, in this case take the newest date.
-   - When asked about when a respondent was last active in relation to a project filter via last_activity_date from project_respondent table.
+4. TIMESTAMPS & LIFE CYCLE DATES:
+   - Baseline creation, registration, or initial appearance queries: Filter using the `created_date` column in the `respondent_type_specification` table. Grouped entities with multiple type associations must resolve to the oldest baseline date via MIN().
+   - Last active or interaction queries: Filter using the `update_date` column in the `respondent_type_specification` table. Grouped entities with multiple type associations must resolve to the newest interaction date via MAX().
+   - Specific project interaction timelines: Filter using the `last_activity_date` column in the `project_respondent` table.
 
-5. PROJECTS
-   - Words like participate, took part, applied, will be used in relation to projects. When asked such question filter via project_respondent and projects tables.
-   - Words like participate, exclude, remove, disregard, will be used in relation to projects whenever we dont want people associated with a certain interaction level to a project.
-   - If the question about a project requires a date or date range use the last_activity_date to filter.
-   - Always use lower() function on the project_number as it is a combination of letters and number and they are saved with lower values in the database.
+5. PROJECT PARTICIPATION:
+   - Operational terms like "participate", "took part", or "applied" signify explicit project histories. Filter these requests through the `project_respondent` and `projects` tables.
+   - Apply project-specific time boundaries to the `last_activity_date` column.
 
-6.ETHNICITY
-  - Whenever asked about ethnicity filter via respondents table. 
-  - If asked for whites/caucasians use WHERE r.ethnicity IN ('White European', 'White Irish', 'White American', 'White British', 'Gypsy or Irish Traveller', 'Any other white background'). 
+6. ETHNICITY MAPPING:
+   - Querying for ethnicity requirements filters directly against the `respondents` table.
+   - "Whites" or "Caucasians" matching sequence: WHERE r.ethnicity IN ('White European', 'White Irish', 'White American', 'White British', 'Gypsy or Irish Traveller', 'Any other white background').
 
-7.ENUMS
-  - Several columns in the database are PostgreSQL enum types, not plain text (e.g., country, uk_region, county_state, gender, industry, job_status).
-  - NEVER assume the format or use abbreviations. Always use the full stored value exactly as it appears in the database (e.g., 'United States of America' not 'US', 'United Kingdom' not 'UK', 'Male' not 'M').
-  - When unsure of the exact enum value, convert the enum to string first then use ILIKE for partial matching (e.g., WHERE column::text ILIKE '%keyword%'). This casts the enum to text first to avoid type errors.
+7. ENUM COMPLIANCE:
+   - Several attributes utilize PostgreSQL enum types (e.g., country, uk_region, county_state, gender, industry, job_status).
+   - Target full, literal stored string values explicitly (e.g., 'United States of America', 'United Kingdom', 'Male'). 
+   - If the exact stored string representation is ambiguous, convert the enum type to text inline for safe partial string comparison: WHERE column::text ILIKE '%keyword%'.
 
-8.DEMOGRAPHICS
-  - Whenever a search/request inclued cities always us ILIKE for partial matching instead of searching using the actual value in the question.
+8. GEOGRAPHIC DEMOGRAPHICS:
+   - Target city filters using partial text matching via ILIKE to ensure regional capture.
 """
 
 # ----------------------------
@@ -132,12 +129,37 @@ def get_schema_description() -> str:
             else:
                 break
 
+    # Helper to construct a clean, structural context block from separate components
+    def build_structured_payload(catalog_content: str) -> str:
+        return f"""# SYSTEM DATA MANUAL & OPERATIONAL RULES
+
+## SECTION 1: DATABASE ENVIRONMENT PHYSICAL DICTIONARY
+[CRITICAL] You must build queries utilizing ONLY the physical table names and specific columns inventoried inside this block. Do not extrapolate, assume, or invent schema configurations.
+
+<database_schema_inventory>
+{catalog_content}
+</database_schema_inventory>
+
+---
+
+## SECTION 2: BEHAVIORAL EXECUTION GUIDELINES & CONSTRAINTS
+[CRITICAL] Treat the operational boundaries, semantic definitions, and filter requirements below with the HIGHEST PRIORITY. They dictate how human prompts must manifest as compliant SQL constraints.
+
+### 2.1 SEMANTIC TRANSLATION RULES
+<semantic_glossary>
+{SEMANTIC_GLOSSARY.strip()}
+</semantic_glossary>
+
+### 2.2 COMPLIANCE & BUSINESS POLICIES
+<business_context_rules>
+{BUSINESS_CONTEXT.strip()}
+</business_context_rules>
+"""
+        
     if not db_awake:
         st.warning(
             "Database failed to wake up within timeout limit. Using static fallback.")
-        fallback_lines = [STATIC_SCHEMA_FALLBACK,
-                          SEMANTIC_GLOSSARY, "", BUSINESS_CONTEXT]
-        return "\n".join(fallback_lines)
+        return build_structured_payload(STATIC_SCHEMA_FALLBACK.strip())
 
     # ------------------------------------------------------------
 
@@ -216,77 +238,50 @@ def get_schema_description() -> str:
                     f"{from_col} → {to_table}.{to_col}"
                 )
 
-            # 4. Build a compact schema string
-            schema_lines = [
-                "We have a PostgreSQL database that contains the following tables:\n",
-                "COLUMN INVENTORY (use these exact column names — do not invent columns):\n"
-            ]
-
+            # 4. Assemble the raw catalog component using clean Markdown formatting
+            schema_catalog_lines = []
             for table in tables:
                 cols = table_cols.get(table, [])
-                schema_lines.append(f"TABLE: {table}")
-                schema_lines.append(f"  Columns: {', '.join(cols)}")
+                schema_catalog_lines.append(f"### Table: `{table}`")
+                schema_catalog_lines.append(f"- **Columns:** {', '.join(cols)}")
                 if relationships.get(table):
-                    schema_lines.append(
-                        f"  Foreign keys: {', '.join(relationships[table])}")
-                schema_lines.append("")
+                    schema_catalog_lines.append(f"- **Foreign Keys:** {', '.join(relationships[table])}")
+                schema_catalog_lines.append("")
 
-            schema_lines.append("RELATIONSHIPS SUMMARY:")
-            schema_lines.append(
-                "Tables that have no declared FK but join via email: use r.email = other_table.email")
-            schema_lines.append("")
-            schema_lines.append(SEMANTIC_GLOSSARY)
-            schema_lines.append("")
-            schema_lines.append(BUSINESS_CONTEXT)
-
-            return "\n".join(schema_lines)
+            schema_catalog_lines.append("### Implicit Dynamic Joins:")
+            schema_catalog_lines.append("- Implicit matching pattern: For tables missing formal FK definitions, join using `r.email = target_table.email`.")
+            
+            raw_catalog = "\n".join(schema_catalog_lines)
+            
+            # 5. Return the fully compartmentalized handbook layout
+            return build_structured_payload(raw_catalog)
 
     except Exception as e:
-        # Fall back to static description if DB is unreachable
-        st.warning(f"Could not load live schema, using static fallback: {e}")
-
-        fallback_lines = [
-            STATIC_SCHEMA_FALLBACK,
-            SEMANTIC_GLOSSARY,
-            "",
-            BUSINESS_CONTEXT
-        ]
-        return "\n".join(fallback_lines)
+        st.warning(f"Could not load live schema, using structured static fallback: {e}")
+        return build_structured_payload(STATIC_SCHEMA_FALLBACK.strip())
 
 
 # ----------------------------
 # Schema context
 # ----------------------------
-BUSINESS_CONTEXT = """
-IMPORTANT BUSINESS CONTEXT:
-- respondent: Core table of the database. Nearly all table connect through this table.
-- almost all table connect though a column called email. 
-- unsubscribe_blacklist contains opted-out emails — ALWAYS exclude them
+BUSINESS_CONTEXT = """COMPLIANCE & BUSINESS POLICIES:
+- respondent: Core table containing global panel memberships. Nearly all contextual tables associate through this table.
+- Association standard: Most contextual tables establish relations explicitly through the `email` column.
+- unsubscribe_blacklist: Contains opted-out panel profiles.
 
-CRITICAL RULES YOU MUST ALWAYS FOLLOW:
-1. ALWAYS exclude emails that appear in the unsubscribe_blacklist table from ANY query 
-   result that returns respondent emails or counts unless specified otherwise. Always use:
-   AND email NOT IN (SELECT email FROM unsubscribe_blacklist)
-   or a LEFT JOIN with WHERE unsubscribe_blacklist.email IS NULL.
-2. Always use lowercase table and column names.
-3. Use PostgreSQL syntax only.
-4. DISREGARD is_deleted and is_active columns from respondent and respondent_type_specification tables in your queries unless specified in the question.
-5. ALWAYS qualify every column name with its table alias when writing JOIN queries.
-   Never write SELECT email, SELECT country etc when multiple tables are joined.
-   Always write SELECT r.email, SELECT a.country etc.
-   This applies to WHERE clauses, ON clauses, GROUP BY, and ORDER BY as well.
-   Example: WHERE r.email NOT IN (...) not WHERE email NOT IN (...).
-6. When a question asks to COUNT something, return a single aliased column.
-   Example: SELECT COUNT(DISTINCT r.email) AS total_respondents
-   Never return an unnamed count column.
-7. When joining respondent to addresses, always use LEFT JOIN not INNER JOIN unless 
-   the question specifically requires an address field to be present. Many respondents 
-   may not have an address record and an INNER JOIN would silently exclude them from 
-   counts.
-8. Never use SELECT * in any query. Always specify the columns you need explicitly.
-9. When filtering by date, always use TIMESTAMP WITH TIME ZONE safe comparisons (e.g., column_name >= '2024-01-01'::timestamptz). 
-   Use only date columns explicitly listed in the schema.
-10.EXPORT PROJECT CLAUSES: When a user requests an "export" for a specific project number (e.g., "export ... for project FSIXXXX"), DO NOT filter the SQL query using `p.project_number = '...'` or join the `projects`/`project_respondent` tables based on that project ID. The project code in export strings is captured by an external application layer for tracking/suppression and must NOT limit the target audience data pool unless the prompt explicitly says the respondents "participated in", "took part in", or "applied to" that specific project.
+DETERMINISTIC EXECUTION RULES:
+1. Exclude opted-out audience pools from all executable SQL outputs and counts by enforcing an anti-join or inclusion check against the `unsubscribe_blacklist` table. 
+   Execution Standard: Add `AND r.email NOT IN (SELECT email FROM unsubscribe_blacklist)` or implement a LEFT JOIN where `unsubscribe_blacklist.email IS NULL`.
+2. Write all database identifiers, including table names and columns, using strictly lowercase characters.
+3. Generate queries using valid PostgreSQL syntax exclusively.
+4. Focus columns `is_deleted` and `is_active` within the `respondent` and `respondent_type_specification` tables only when the user's prompt explicitly names state conditions or deletion flags.
+5. In multi-table JOIN operations, explicitly prefix every column name with its declared table alias across all statement fragments, including SELECT, WHERE, ON, GROUP BY, and ORDER BY blocks (e.g., `SELECT r.email`, `SELECT a.country`).
+6. Formulate COUNT aggregations with a singular, clearly named column alias (e.g., `SELECT COUNT(DISTINCT r.email) AS total_respondents`).
+7. Connect `respondent` to `addresses` utilizing a LEFT JOIN configuration. Reserve INNER JOIN configurations strictly for instances where the prompt introduces mandatory structural address boundaries.
+8. Explicitly declare every requested column name individually in the SELECT clause. Avoid using wildcard operators like `*`.
+9. Validate date filter comparisons using TIMESTAMP WITH TIME ZONE notation patterns (e.g., `column_name >= '2024-01-01'::timestamptz`). Restrict operations to explicit date columns documented in the physical dictionary.
+10. Format listings, exports, or data collections to explicitly return `r.email`, `r.first_name`, and all operational attributes actively engaged in filtering constraints.
+11. AUDIENCE CAPTURE EXPORT SCENARIOS: General export strings containing a standalone project identifier (e.g., "export ... for project FSIXXXX") dictate broad target audience selections. Keep the audience scope open by omitting project mapping constraints (`p.project_number`) or project history joins unless the prompt introduces explicit participation phrases like "participated in", "took part in", or "applied to".
 """
 
 STATIC_SCHEMA_FALLBACK = """
@@ -359,33 +354,27 @@ The PostgreSQL database contains the following key tables:
 
 CONTEXTUALIZE_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """
-You are an expert conversational context manager. Your sole job is to rewrite a follow-up question into a single, self-contained, completely unambiguous question using the chat history as context.
+You are an expert AI data assistant specializing in conversation context restoration for a database query system.
 
-Follow these steps in order:
+Your job is to read the dialogue history and the user's latest question, then rephrase the latest question into a completely standalone, self-contained question.
 
-STEP 1 — RESOLVE ALL PRONOUNS AND REFERENCES
-Before anything else, scan the follow-up for any pronouns or vague references:
-"them", "they", "those", "it", "these", "the same", "out of those", "out of them", "of them", "those people", "rerun the previous", "try again", "rerun the search", "redo" etc.
-Trace each one back to its referent in the most recent exchange and substitute it explicitly.
+### REPHRASING RULES:
+1. Core Scope Preservation: Retain all operational attributes from recent history (e.g., specific Project Numbers like 'FSI260409IV', countries, gender, or age boundaries) unless the user's latest question explicitly alters those bounds.
+2. Pronoun Resolution: Replace ambiguous terms ("they", "them", "those", "the list", "the cohort") with the explicit target entity group established in the conversation history (e.g., "Consumers", "Healthcare Professionals").
+3. Intent Continuity: Maintain the core request type—if the user asks "how many", the standalone question must demand a count. If they ask for "a list" or "export", it must demand a detailed breakdown.
 
-Example:
-  History:   User asked "How many consumers do we have?" → system counted consumers
-  Follow-up: "How many of them are females?"
-  Resolution: "them" = consumers → rewrite as "How many consumers are female?"
+### OUTPUT EXPECTATIONS:
+You must structure your reply using XML tags to isolate your reasoning from your final answer:
+- Write your brief step-by-step history analysis inside <thinking>...</thinking> tags.
+- Write the final, completely standalone rephrased question inside <rewritten_question>...</rewritten_question> tags.
 
-STEP 2 — PRESERVE AGGREGATION INTENT
-If the prior question used an aggregation or action verb (how many, total, list, give me, show me, count), carry that exact intent into the rewrite unless the follow-up explicitly changes it.
-
-  History:   "How many active users do we have?"
-  Follow-up: "And in the UK?"
-  Correct:   "How many active users do we have in the UK?"  ✅
-  Wrong:     "Who are the active users in the UK?"          ❌ (changed intent)
-
-STEP 3 — MAINTAIN EXISTING FILTERS
-Keep all constraints established in the conversation thread (date ranges, status flags, regions, roles, etc.) unless the follow-up explicitly overrides one.
-
-STEP 4 — OUTPUT
-Return ONLY the final rewritten question. No markdown, no explanation, no preamble.
+Example Response Format:
+<thinking>
+The user is asking "how many are female?". History shows the previous question was "Show me a list of Consumers in the UK for project FSI12345". I need to bring forward the UK region and project constraints, while shifting the intent from a list to a count of females.
+</thinking>
+<rewritten_question>
+How many female consumers are there in the United Kingdom for project FSI12345?
+</rewritten_question.
 """),
     MessagesPlaceholder(variable_name="history"),
     ("human", "{question}")
@@ -431,12 +420,12 @@ RESPONSE_PROMPT = ChatPromptTemplate.from_messages([
 You are a data analyst reporting internal database results to a colleague.
 
 Rules:
-- Report ONLY what the data shows. Never compare to external benchmarks or real world statistics.
-- If the result is a single value, respond in one short sentence stating just the number.
-- Do not add commentary, caveats, or explanations unless the data is empty.
-- When you run a SQL query that returns data, DO NOT generate a Markdown table of the results in your text response. Your response should only be a brief summary of what you found, never the raw rows themselves.
-- If no data was returned, say: "No results were found for that question."
-- The email must always be unique when asked for a list. If the email is associated with multiple values within a single column, the values must be merged and seperated by a ';'. 
+- Report ONLY what the data shows. Stick strictly to internal data and avoid external benchmarks or real-world statistics.
+- For single-value results, respond in one short sentence stating just the number.
+- Provide a brief text summary of the findings rather than generating a Markdown table or returning the raw rows.
+- Omit commentary, caveats, or explanations unless the data is empty.
+- If no data is returned, output exactly: "No results were found for that question."
+- When providing a list, ensure each email is unique. If an email has multiple associated values in a single column, merge those values and ensure they are separated by a ';'.
 
 CRITICAL RULE: If a question asked for a List, Export, Overall a selection of people or records, always provide r.email, r.first_name plus ALL columns used for filtering.
 """),
@@ -452,12 +441,20 @@ VALIDATION_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """
 You are a strict SQL code reviewer for a market research database.
 
-Perform these two checks:
-1. Filters: Does the SQL apply EVERY filter and condition requested in the user's question (e.g., age ranges, gender, respondent types)?
-2. Output Format: Does the SQL use the correct aggregation? If the user asks "how many" or the question implies a count, the SQL MUST use COUNT(). If they ask for a list, it MUST select email, first_name, last_name.
+You must evaluate the generated SQL query against the user's original question using the operational guidelines, semantic mappings, and database rules provided below.
 
-- If the SQL accurately reflects all constraints AND the correct output format, reply EXACTLY with: VALID
-- If the SQL is missing parameters or uses the wrong output format (e.g., returning a list when a count is expected), reply ONLY with a brief description of what is wrong. Example: "Missing filter for ages 20-45" or "Should be a COUNT() query, not a SELECT list."
+### RULES & SEMANTIC CONTEXT:
+{rules}
+
+### YOUR EVALUATION TASKS:
+Perform these two checks:
+1. Filters & Mappings: Does the SQL accurately apply EVERY filter and condition requested in the user's question? Verify that it correctly implements the rules in the SEMANTIC TRANSLATION GLOSSARY and BUSINESS CONTEXT above (e.g., dynamic age calculations from DOB, specific enum string matches, or ethnicity array expansions).
+2. Output Format: Does the SQL use the correct aggregation? If the user asks "how many" or the question implies a count, the SQL MUST use COUNT(). If they ask for a list, selection, or export, it MUST explicitly select email, first_name, last_name, and any columns used for filtering.
+
+### OUTPUT FORMAT:
+- If the SQL completely satisfies all filters, rules, AND output formats, reply EXACTLY with: VALID
+- If the SQL misses filters, uses incorrect column mappings, or violates a business context rule, reply ONLY with a brief description of the error. 
+  Example: "Missing dynamic AGE calculation filter for ages 25-60." or "Should use COUNT() instead of a raw column list."
 """),
     ("human", """
 A user asked: "{question}"
@@ -539,7 +536,11 @@ def validate_sql_intent(question: str, sql: str) -> str:
     """Checks if the generated SQL dropped any user parameters."""
     llm = get_llm()
     chain = VALIDATION_PROMPT | llm
-    result = chain.invoke({"question": question, "sql": sql}).content.strip()
+    
+    # Bundle the semantic glossary and business rules context seamlessly
+    rules_context = f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}"
+    
+    result = chain.invoke({"rules": rules_context, "question": question, "sql": sql}).content.strip()
     return result
 
 
@@ -871,32 +872,61 @@ def _handle_export_tracking(
         msg += f" _{skipped} skipped (already tracked)._"
     st.success(msg)
 
+def contextualize_user_question(question: str, history: list) -> str:
+    """
+    Rewrites ambiguous user questions into standalone queries using a 
+    Chain-of-Thought scratchpad to protect filters from dropping out.
+    """
+    if not history:
+        return question
+
+    # Safely convert raw list structures into LangChain Message objects
+    parsed_history = _parse_history(history)
+    llm = get_llm()
+    chain = CONTEXTUALIZE_PROMPT | llm
+    
+    try:
+        response = chain.invoke({
+            "history": parsed_history,
+            "question": question
+        }).content.strip()
+        
+        # Isolate the final rephrased question from the XML tag
+        match = re.search(r"<rewritten_question>(.*?)</rewritten_question>", response, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+            
+        # Fallback: If the model missed the tags, strip thinking blocks out
+        clean_text = re.sub(r"<thinking>.*?</thinking>", "", response, flags=re.DOTALL).strip()
+        if clean_text:
+            return clean_text
+            
+    except Exception as e:
+        st.warning(f"Contextualization pipeline anomaly: {e}. Defaulting to raw input.")
+        
+    return question
 
 def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | None, pd.DataFrame | None]:
     """Generates SQL, validates intent, runs it, and handles DB retries."""
 
+    raw_original_question = question
+    question = contextualize_user_question(question, history)
+    
     parsed_history = _parse_history(history)
     is_export, project_number, is_override = False, None, False
 
     with st.expander("🔍 Query Process", expanded=True):
-        # Step 0: Context Condensation Layer
+        # Step 0: Context Condensation Layer (Streamlined to display the pre-processed output)
         st.markdown("**Step 0: Synchronizing Context ...**")
         if parsed_history:
-            llm = get_llm()
-            context_chain = CONTEXTUALIZE_PROMPT | llm
-            condensed_question = context_chain.invoke({
-                "history": parsed_history,
-                "question": question
-            }).content.strip()
-
-            if condensed_question != question:
-                st.info(
-                    f"🔄 Rephrased contextually to: *\"{condensed_question}\"*")
-                question = condensed_question
+            if question != raw_original_question:
+                st.info(f"🔄 Rephrased contextually to: *\"{question}\"*")
+            else:
+                st.info("📊 Context analyzed; query contains explicit attributes.")
         else:
             st.info("🆕 Fresh chat thread started.")
-        is_export, project_number, is_override = detect_export_request(
-            question)
+            
+        is_export, project_number, is_override = detect_export_request(question)
 
         # Step 1
         st.markdown("**Step 1: Generating SQL...**")
