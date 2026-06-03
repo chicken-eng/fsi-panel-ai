@@ -819,7 +819,7 @@ def insert_export_tracking(
             conn.execute(
                 text(f"""
                     INSERT INTO export_tracker (email, project_number, filters, datetimestamp)
-                    VALUES (:email, :pn, :filters, NOW() AT TIME ZONE 'UTC')
+                    SELECT unnest(:emails::varchar[]), :pn, :filters, NOW() AT TIME ZONE 'UTC'
                     ON CONFLICT (email, project_number) {conflict}
                 """),
                 {"emails": emails, "pn": project_number, "filters": filters_str}
