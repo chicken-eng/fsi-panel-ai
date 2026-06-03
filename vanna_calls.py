@@ -63,6 +63,7 @@ SEMANTIC TRANSLATION GLOSSARY (Use this to map human terms to database values):
    - Words like participate, took part, applied, will be used in relation to projects. When asked such question filter via project_respondent and projects tables.
    - Words like participate, exclude, remove, disregard, will be used in relation to projects whenever we dont want people associated with a certain interaction level to a project.
    - If the question about a project requires a date or date range use the last_activity_date to filter.
+   - Always use lower() function on the project_number as it is a combination of letters and number and they are saved with lower values in the database.
 
 6.ETHNICITY
   - Whenever asked about ethnicity filter via respondents table. 
