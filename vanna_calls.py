@@ -541,6 +541,9 @@ def validate_sql_intent(question: str, sql: str) -> str:
     
     # Bundle the semantic glossary and business rules context seamlessly
     rules_context = f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}"
+
+    if is_export:
+        rules_context += f"\n\n{EXPORT_POLICIES}"
     
     result = chain.invoke({"rules": rules_context, "question": question, "sql": sql}).content.strip()
     return result
@@ -948,7 +951,7 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
 
         # Step 2: Validate Intent
         st.markdown("**Step 2: Validating Query Intent...**")
-        validation_result = validate_sql_intent(question, sql)
+        validation_result = validate_sql_intent(question, sql, is_export=is_export)
 
         if validation_result != "VALID":
             st.warning(
@@ -956,11 +959,15 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
             st.markdown(
                 "**Step 2.5: Rewriting SQL to include missing parameters...**")
 
+            rewrite_rules = f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}"
+            if is_export:
+                rewrite_rules += f"\n\n{EXPORT_POLICIES}"
+
             # Run the targeted rewrite
             llm = get_llm()
             chain = REWRITE_PROMPT | llm
             sql = chain.invoke({
-                "rules": f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}",
+                "rules": rewrite_rules,
                 "history": parsed_history,
                 "question": question,
                 "bad_sql": sql,
