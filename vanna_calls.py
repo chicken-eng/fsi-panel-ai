@@ -272,14 +272,13 @@ BUSINESS_CONTEXT = """COMPLIANCE & BUSINESS POLICIES:
 DETERMINISTIC EXECUTION RULES:
 1. Exclude opted-out audience pools from all executable SQL outputs and counts by enforcing an anti-join or inclusion check against the `unsubscribe_blacklist` table. 
    Execution Standard: Add `AND r.email NOT IN (SELECT email FROM unsubscribe_blacklist)` or implement a LEFT JOIN where `unsubscribe_blacklist.email IS NULL`.
-2. Write all database identifiers, including table names and columns, using strictly lowercase characters.
-3. Generate queries using valid PostgreSQL syntax exclusively.
-4. Focus columns `is_deleted` and `is_active` within the `respondent` and `respondent_type_specification` tables only when the user's prompt explicitly names state conditions or deletion flags.
-5. In multi-table JOIN operations, explicitly prefix every column name with its declared table alias across all statement fragments, including SELECT, WHERE, ON, GROUP BY, and ORDER BY blocks (e.g., `SELECT r.email`, `SELECT a.country`).
-6. Formulate COUNT aggregations with a singular, clearly named column alias (e.g., `SELECT COUNT(DISTINCT r.email) AS total_respondents`).
-7. Connect `respondent` to `addresses` utilizing a LEFT JOIN configuration. Reserve INNER JOIN configurations strictly for instances where the prompt introduces mandatory structural address boundaries.
-8. Explicitly declare every requested column name individually in the SELECT clause. Avoid using wildcard operators like `*`.
-9. Validate date filter comparisons using TIMESTAMP WITH TIME ZONE notation patterns (e.g., `column_name >= '2024-01-01'::timestamptz`). Restrict operations to explicit date columns documented in the physical dictionary.
+2. Generate queries using valid PostgreSQL syntax exclusively.
+3. Focus columns `is_deleted` and `is_active` within the `respondent` and `respondent_type_specification` tables only when the user's prompt explicitly names state conditions or deletion flags.
+4. In multi-table JOIN operations, explicitly prefix every column name with its declared table alias across all statement fragments, including SELECT, WHERE, ON, GROUP BY, and ORDER BY blocks (e.g., `SELECT r.email`, `SELECT a.country`).
+5. Formulate COUNT aggregations with a singular, clearly named column alias (e.g., `SELECT COUNT(DISTINCT r.email) AS total_respondents`).
+6. Connect `respondent` to `addresses` utilizing a LEFT JOIN configuration. Reserve INNER JOIN configurations strictly for instances where the prompt introduces mandatory structural address boundaries.
+7. Explicitly declare every requested column name individually in the SELECT clause. Avoid using wildcard operators like `*`.
+8. Validate date filter comparisons using TIMESTAMP WITH TIME ZONE notation patterns (e.g., `column_name >= '2024-01-01'::timestamptz`). Restrict operations to explicit date columns documented in the physical dictionary.
 """
 
 STATIC_SCHEMA_FALLBACK = """
@@ -482,7 +481,7 @@ EXPORT_POLICIES = """
 ### EXPORT & LISTING OVERRIDES
 [CRITICAL] The user has explicitly requested a data export, list, or detailed audience extraction. You MUST adhere to these overrides:
 1. Output Format: You MUST explicitly select `r.email`, `r.first_name`, `r.last_name`, and all operational attributes actively engaged in filtering constraints. NEVER use COUNT() for this query.
-2. Audience Capture Strategy: If the request contains a standalone project identifier (e.g., "export for project FSIXXXX") without explicit participation verbs (e.g., "participated in"), keep the audience scope broad. Do NOT constrain the query with an inner join to project history tables.
+2. Audience Capture Strategy (The "For Project" Rule): When a user asks to export an audience "for" a project (e.g., "export consumers for project FSI123"), they are building a NEW target list. You MUST NOT join the `projects` or `project_respondent` tables, and you MUST NOT filter by `project_number` in your SQL. ONLY join project tables if the user explicitly asks for people who "already participated", "completed", or "applied" to a specific project in the past.
 """
 
 # ----------------------------
