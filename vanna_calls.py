@@ -444,7 +444,7 @@ You must evaluate the generated SQL query against the user's original question u
 ### YOUR EVALUATION TASKS:
 Perform these two checks:
 1. Filters & Mappings: Does the SQL accurately apply EVERY filter and condition requested in the user's question? Verify that it correctly implements the rules in the SEMANTIC TRANSLATION GLOSSARY and BUSINESS CONTEXT above (e.g., dynamic age calculations from DOB, specific enum string matches, or ethnicity array expansions).
-2. Output Format: Does the SQL use the correct aggregation? If the user asks "how many" or the question implies a count, the SQL MUST use COUNT(). If they ask for a list, selection, or export, it MUST explicitly select email, first_name, last_name, and any columns used for filtering.
+2. Output Format: Does the SQL use the correct aggregation? If the user asks "how many", the SQL MUST use COUNT(). If they ask for a list, selection, or export, it MUST explicitly select email, first_name, last_name, AND EVERY SINGLE COLUMN used in the WHERE clause (e.g., gender, date_of_birth, country).
 
 ### OUTPUT FORMAT:
 - If the SQL completely satisfies all filters, rules, AND output formats, reply EXACTLY with: VALID
@@ -480,7 +480,7 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
 EXPORT_POLICIES = """
 ### EXPORT & LISTING OVERRIDES
 [CRITICAL] The user has explicitly requested a data export, list, or detailed audience extraction. You MUST adhere to these overrides:
-1. Output Format: You MUST explicitly select `r.email`, `r.first_name`, `r.last_name`, and all operational attributes actively engaged in filtering constraints. NEVER use COUNT() for this query.
+1. Output Format: You MUST explicitly select `r.email`, `r.first_name`, `r.last_name`. IN ADDITION, you MUST explicitly include EVERY column you use in your WHERE clause inside your SELECT clause. (e.g., if you filter by `r.gender` and `a.country`, your select MUST be `SELECT r.email, r.first_name, r.last_name, r.gender, a.country`). NEVER use COUNT() for this query.
 2. Audience Capture Strategy (The "For Project" Rule): When a user asks to export an audience "for" a project (e.g., "export consumers for project FSI123"), they are building a NEW target list. You MUST NOT join the `projects` or `project_respondent` tables, and you MUST NOT filter by `project_number` in your SQL. ONLY join project tables if the user explicitly asks for people who "already participated", "completed", or "applied" to a specific project in the past.
 """
 
