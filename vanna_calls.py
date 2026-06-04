@@ -446,10 +446,16 @@ Perform these two checks:
 1. Filters & Mappings: Does the SQL accurately apply EVERY filter and condition requested in the user's question? Verify that it correctly implements the rules in the SEMANTIC TRANSLATION GLOSSARY and BUSINESS CONTEXT above (e.g., dynamic age calculations from DOB, specific enum string matches, or ethnicity array expansions).
 2. Output Format: Does the SQL use the correct aggregation? If the user asks "how many", the SQL MUST use COUNT(). If they ask for a list, selection, or export, it MUST explicitly select email, first_name, last_name, AND EVERY SINGLE COLUMN used in the WHERE clause (e.g., gender, date_of_birth, country).
 
-### OUTPUT FORMAT:
-- If the SQL completely satisfies all filters, rules, AND output formats, reply EXACTLY with: VALID
-- If the SQL misses filters, uses incorrect column mappings, or violates a business context rule, reply ONLY with a brief description of the error. 
-  Example: "Missing dynamic AGE calculation filter for ages 25-60." or "Should use COUNT() instead of a raw column list."
+### OUTPUT FORMAT (STRICT):
+Your response must strictly follow one of these two formats. Do not include introductory text, conversational fluff, or repetitive justifications.
+
+FORMAT 1: If the SQL is 100% correct and compliant, output exactly this single word:
+VALID
+
+FORMAT 2: If the SQL fails any check, output a short, bulleted list of the specific errors found, then STOP generating immediately. 
+Example:
+* Missing dynamic AGE calculation filter.
+* Omitted r.gender from the SELECT clause despite filtering by it.
 """),
     ("human", """
 A user asked: "{question}"
