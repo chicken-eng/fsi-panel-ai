@@ -74,13 +74,14 @@ def open_action_popup(row_data):
                 # Execute the queries for this specific loop iteration
                 try:
                     with engine.connect() as conn:
+                        pn_clean = str(project_number).lower().strip()
                         whole_count = conn.execute(text(query_whole)).scalar() or 0
                         launched_count = conn.execute(text(query_launched), {
-                            "pn": str(project_number).lower(), 
+                            "pn": pn_clean,
                             "raw_sql": raw_sql
                         }).scalar() or 0
                         available_count = conn.execute(text(query_available), {
-                            "pn": str(project_number).lower()
+                            "pn": pn_clean
                         }).scalar() or 0
                         
                     # Render the metrics
