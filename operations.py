@@ -79,12 +79,6 @@ def open_action_popup(row_data):
                 st.error("Failed to execute sample calculations against the database.")
                 st.exception(e)
 
-    st.divider()
-    st.info("⚡ This popup is ready to process customized operational actions.")
-    
-    if st.button("Execute Action Query", type="primary", use_container_width=True):
-        st.success("Query placeholder executed successfully!")
-
 def show_operations_page():
     st.title("Operations Activity Logs")
     st.subheader("Open projects")
