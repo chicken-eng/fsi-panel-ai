@@ -14,6 +14,8 @@ from fsi_ai import (
     generate_summary_cached
 )
 
+from operations import show_operations_page
+
 def build_history_messages(messages: list, max_turns: int = 3) -> list:
     """
     Builds conversation context from the last N turns.
@@ -87,9 +89,23 @@ st.set_page_config(layout="wide")
 st.markdown(
     """
     <style>
+        /* Forces the sidebar navigation container width to stay narrow */
         [data-testid="stSidebar"] {
-            min-width: 220px !important;
-            max-width: 220px !important;
+            min-width: 240px !important;
+            max-width: 240px !important;
+        }
+        
+        /* Overrides the overly bright green selection color for primary buttons */
+        button[data-testid="stBaseButton-primary"] {
+            background-color: #1E3A8A !important;  /* Elegant dark blue/navy */
+            border-color: #1E3A8A !important;
+            color: #ffffff !important;
+        }
+        
+        /* Optional: Change hover styling for primary buttons */
+        button[data-testid="stBaseButton-primary"]:hover {
+            background-color: #172554 !important;
+            border-color: #172554 !important;
         }
     </style>
     """,
@@ -165,6 +181,8 @@ if st.session_state["page"] == "FSI AI":
                         else:
                             st.dataframe(df)
                             
+                    if msg.get("plotly_code"):
+                        st.code(msg["plotly_code"], language="python", line_numbers=True)
                     if msg.get("fig"):
                         st.plotly_chart(msg["fig"])
                     if msg.get("summary"):
@@ -221,6 +239,7 @@ if st.session_state["page"] == "FSI AI":
                             
                     if should_generate_chart_cached(question=my_question, sql=sql, df=df):
                         code = generate_plotly_code_cached(question=my_question, sql=sql, df=df)
+                        turn_data["plotly_code"] = code
                         if code:
                             fig = generate_plot_cached(code=code, df=df)
                             if fig:
@@ -233,15 +252,12 @@ if st.session_state["page"] == "FSI AI":
                     if summary:
                         turn_data["summary"] = summary
                         st.text(summary)
-                            
             else:
                 turn_data["error"] = "I wasn't able to generate SQL for that question or the query was unsupported."
                 st.error(turn_data["error"])
                 
-            # Finally, append the full assistant response to the history
             st.session_state["messages"].append(turn_data)
 
 elif st.session_state["page"] == "Operations":
-    st.title("Operations Activity Logs")
-    st.info("This section will display real-time physical analytics and pipeline metrics soon.")
-    # Keep this canvas empty as requested for your future operational metrics feature.
+    # Call the functional module code directly to draw the dashboard layout
+    show_operations_page()
