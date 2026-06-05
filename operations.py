@@ -28,6 +28,29 @@ def show_operations_page():
     
     # 2. Reusing your existing database connection engine
     engine = get_engine()
+
+    max_retries = 5
+    delay = 3
+    db_awake = False
+
+    for attempt in range(max_retries):
+        try:
+            with engine.connect() as conn:
+                # Execute an ultra-lightweight ping query to force compute spin-up
+                conn.execute(text("SELECT 1"))
+                db_awake = True
+                break
+        except Exception as e:
+            error_str = str(e).lower()
+            is_conn_error = any(keyword in error_str for keyword in [
+                "connection", "timeout", "closed", "ssl", "operationalerror"
+            ])
+            if is_conn_error and attempt < max_retries - 1:
+                # Database is sleeping; wait and try again
+                time.sleep(delay)
+            else:
+                break
+                
     query = "SELECT project_number, project_name, project_type, topic, sharepoint_link, created_date FROM projects WHERE project_state = 'Open';"
     
     try:
