@@ -5,16 +5,17 @@ import streamlit as st
 from sqlalchemy import text
 from fsi_ai import get_engine
 
-def get_project_sql(engine, project_number):
-    """Fetches the saved AI query for this project from the export tracker."""
-    query = "SELECT filters FROM export_tracker WHERE project_number = :pn LIMIT 1"
+def get_all_project_sqls(engine, project_number):
+    """Fetches ALL distinct saved AI queries for this project from the export tracker."""
+    query = "SELECT DISTINCT filters FROM export_tracker WHERE project_number = :pn AND filters IS NOT NULL"
     try:
         with engine.connect() as conn:
-            # .scalar() returns the first column of the first row (the SQL string)
-            return conn.execute(text(query), {"pn": str(project_number).lower()}).scalar()
+            # Fetch all distinct sql strings and return them as a list
+            result = conn.execute(text(query), {"pn": str(project_number).lower()})
+            return [row[0] for row in result]
     except Exception as e:
-        st.warning(f"Could not retrieve base SQL: {e}")
-        return None
+        st.warning(f"Could not retrieve base SQLs: {e}")
+        return []
 
 def clean_sql_for_counts(sql):
     """Removes trailing semicolons and chops off any LIMIT clause at the end."""
@@ -35,49 +36,70 @@ def open_action_popup(row_data):
     engine = get_engine()
     
     with st.spinner("Calculating live sample metrics..."):
-        base_sql = get_project_sql(engine, project_number)
+        base_sqls = get_all_project_sqls(engine, project_number)
         
-        if not base_sql:
+        if not base_sqls:
             st.info("No saved filters/exports found for this project yet. Launch a sample from the FSI AI page to populate these metrics.")
         else:
-            # 1. Clean the saved query
-            clean_sql = clean_sql_for_counts(base_sql)
-            
-            # 2. Define the three exact counting queries
-            # Whole Sample: Count everything returned by the clean AI query
-            query_whole = f"SELECT COUNT(*) FROM ({clean_sql}) AS sub_whole"
-            
-            # Launched Sample: Count unique emails explicitly saved in the tracker for this project
-            query_launched = "SELECT COUNT(DISTINCT email) FROM export_tracker WHERE project_number = :pn"
-            
-            # Available Sample: Count everything from the clean AI query that is NOT in the tracker
-            query_available = f"""
-                SELECT COUNT(*) FROM ({clean_sql}) AS sub_avail
-                WHERE sub_avail.email NOT IN (
-                    SELECT email FROM export_tracker WHERE project_number = '{str(project_number).lower()}'
-                )
-            """
-            
-            # 3. Execute queries
-            try:
-                with engine.connect() as conn:
-                    whole_count = conn.execute(text(query_whole)).scalar() or 0
-                    launched_count = conn.execute(text(query_launched), {"pn": str(project_number).lower()}).scalar() or 0
-                    available_count = conn.execute(text(query_available)).scalar() or 0
-                    
-                # 4. Render the metrics side-by-side
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Whole Sample", f"{whole_count:,}")
-                m2.metric("Launched Sample", f"{launched_count:,}")
-                m3.metric("Available Sample", f"{available_count:,}")
+            # Loop through every distinct target audience query found for this project
+            for i, raw_sql in enumerate(base_sqls):
                 
-                # Optional: Let you inspect the cleaned SQL it ran for debugging
-                with st.expander("View Base Target Parameters (SQL)"):
-                    st.code(clean_sql, language="sql")
+                # If there is more than one, give them clean subheadings so the UI doesn't blur together
+                if len(base_sqls) > 1:
+                    st.markdown(f"#### Target Audience Definition #{i + 1}")
                     
-            except Exception as e:
-                st.error("Failed to execute sample calculations against the database.")
-                st.exception(e)
+                clean_sql = clean_sql_for_counts(raw_sql)
+                
+                # 1. Whole Sample: Count everything returned by this specific AI query
+                query_whole = f"SELECT COUNT(*) FROM ({clean_sql}) AS sub_whole"
+                
+                # 2. Launched Sample: Count emails exported under THIS SPECIFIC query string
+                query_launched = "SELECT COUNT(DISTINCT email) FROM export_tracker WHERE project_number = :pn AND filters = :raw_sql"
+                
+                # 3. Available Sample: Count everything from this query that is NOT in the tracker for the whole project
+                query_available = f"""
+                    SELECT COUNT(*) FROM ({clean_sql}) AS sub_avail
+                    WHERE sub_avail.email NOT IN (
+                        SELECT email FROM export_tracker WHERE project_number = :pn
+                    )
+                """
+                
+                # Execute the queries for this specific loop iteration
+                try:
+                    with engine.connect() as conn:
+                        whole_count = conn.execute(text(query_whole)).scalar() or 0
+                        launched_count = conn.execute(text(query_launched), {
+                            "pn": str(project_number).lower(), 
+                            "raw_sql": raw_sql
+                        }).scalar() or 0
+                        available_count = conn.execute(text(query_available), {
+                            "pn": str(project_number).lower()
+                        }).scalar() or 0
+                        
+                    # Render the metrics
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Whole Sample", f"{whole_count:,}")
+                    m2.metric("Launched Sample", f"{launched_count:,}")
+                    m3.metric("Available Sample", f"{available_count:,}")
+                    
+                    # Expandable code block for inspection
+                    with st.expander("View Base Target Parameters (SQL)"):
+                        st.code(clean_sql, language="sql")
+                        
+                except Exception as e:
+                    st.error("Failed to execute sample calculations against the database.")
+                    with st.expander("View Error Details"):
+                        st.exception(e)
+                
+                # Add a divider between multiple queries for visual cleanliness, unless it's the last one
+                if i < len(base_sqls) - 1:
+                    st.divider()
+
+    st.divider()
+    st.info("⚡ This popup is ready to process customized operational actions.")
+    
+    if st.button("Execute Action Query", type="primary", use_container_width=True):
+        st.success("Query placeholder executed successfully!")
 
 def show_operations_page():
     st.title("Operations Activity Logs")
