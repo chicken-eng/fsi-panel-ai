@@ -2,7 +2,7 @@ import time
 import uuid
 import streamlit as st
 from langchain_core.messages import HumanMessage, AIMessage
-from vanna_calls import (
+from fsi_ai import (
     generate_questions_cached,
     generate_sql_cached,
     run_sql_cached,
