@@ -27,31 +27,44 @@ def show_operations_page():
     st.subheader("Open projects")
     
     # 2. Reusing your existing database connection engine
-    engine = get_engine()
+    engine = get_engine()         
+    query = "SELECT project_number, project_name, project_type, topic, sharepoint_link, created_date FROM projects WHERE project_state = 'Open';"
 
+    # ------------------------------------------------------------
+    # NEON SERVERLESS WAKEUP BUFFER
+    # ------------------------------------------------------------
     max_retries = 5
     delay = 3
     db_awake = False
+    
+    with st.spinner("Synchronizing connection with database..."):
+        for attempt in range(max_retries):
+            try:
+                with engine.connect() as conn:
+                    # Execute an ultra-lightweight ping query to force compute spin-up
+                    conn.execute(text("SELECT 1"))
+                    db_awake = True
+                    break
+            except Exception as e:
+                error_str = str(e).lower()
+                # Track typical neon cold start errors
+                is_conn_error = any(keyword in error_str for keyword in [
+                    "connection", "timeout", "closed", "ssl", "operationalerror"
+                ])
+                if is_conn_error and attempt < max_retries - 1:
+                    # Keep user informed while waiting for compute scaling
+                    st.caption(f"⏳ Neon compute node is waking up... (Attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                else:
+                    break
 
-    for attempt in range(max_retries):
-        try:
-            with engine.connect() as conn:
-                # Execute an ultra-lightweight ping query to force compute spin-up
-                conn.execute(text("SELECT 1"))
-                db_awake = True
-                break
-        except Exception as e:
-            error_str = str(e).lower()
-            is_conn_error = any(keyword in error_str for keyword in [
-                "connection", "timeout", "closed", "ssl", "operationalerror"
-            ])
-            if is_conn_error and attempt < max_retries - 1:
-                # Database is sleeping; wait and try again
-                time.sleep(delay)
-            else:
-                break
-                
-    query = "SELECT project_number, project_name, project_type, topic, sharepoint_link, created_date FROM projects WHERE project_state = 'Open';"
+    if not db_awake:
+        st.error("❌ The database connection timed out while waking up. Please refresh the page to retry.")
+        return
+
+    # ------------------------------------------------------------
+    # DATA RETRIEVAL & LAYOUT (Now fully safe from cold starts)
+    # ------------------------------------------------------------
     
     try:
         with engine.connect() as conn:
