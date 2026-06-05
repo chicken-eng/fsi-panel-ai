@@ -28,8 +28,7 @@ def open_action_popup(row_data):
     st.write(f"### Management Panel")
     
     project_number = row_data.get('project_number', 'Unknown')
-    state = row_data.get('project_state', 'Unknown')
-    st.markdown(f"**Target Project:** `{project_number}` | **State:** `{project_state}`")
+    st.markdown(f"**Target Project:** `{project_number}`")
     
     st.divider()
     
