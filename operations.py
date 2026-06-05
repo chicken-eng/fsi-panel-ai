@@ -81,7 +81,7 @@ def show_operations_page():
                 use_container_width=True,
                 hide_index=True,
                 on_select="rerun",
-                selection_mode="single_row"
+                selection_mode="single-row"
             )
             
             # Catch when a user selects a specific table row
