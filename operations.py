@@ -106,7 +106,7 @@ def show_operations_page():
     st.subheader("Open projects")
     
     engine = get_engine()
-    query = "SELECT project_number, project_name, project_type, topic, sharepoint_link, created_date FROM projects WHERE project_state = 'Open';"
+    query = "SELECT project_number, project_name, project_type, topic, sharepoint_link, created_date FROM projects WHERE project_state = 'Open' order by project_type;"
     
     # ------------------------------------------------------------
     # NEON SERVERLESS WAKEUP BUFFER
