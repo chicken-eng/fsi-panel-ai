@@ -79,104 +79,129 @@ avatar_url = "https://i0.wp.com/fieldscopeint.com/wp-content/uploads/2026/03/log
 
 st.set_page_config(layout="wide")
 
-st.sidebar.title("Output Settings")
-st.sidebar.checkbox("Show SQL", value=True, key="show_sql")
-st.sidebar.checkbox("Show Table", value=True, key="show_table")
-st.sidebar.checkbox("Show Plotly Code", value=True, key="show_plotly_code")
-st.sidebar.checkbox("Show Chart", value=True, key="show_chart")
-st.sidebar.checkbox("Show Summary", value=True, key="show_summary")
-st.sidebar.checkbox("Show Follow-up Questions", value=True, key="show_followup")
-st.sidebar.button("Reset", on_click=lambda: set_question(None), use_container_width=True)
+# ------------------------------------------------------------
+# PERMANENT NARROW SIDEBAR NAVIGATION
+# ------------------------------------------------------------
 
-st.title("FSI AI")
-# st.sidebar.write(st.session_state)
+# Inject custom CSS to narrow down the sidebar width permanently
+st.markdown(
+    """
+    <style>
+        [data-testid="stSidebar"] {
+            min-width: 220px !important;
+            max-width: 220px !important;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
-def set_question(question):
-    st.session_state["my_question"] = question
+# Initialize navigation page state
+if "page" not in st.session_state:
+    st.session_state["page"] = "FSI AI"
 
-# 1. Initialize the chat history list if it doesn't exist yet
-if "messages" not in st.session_state:
-    st.session_state["messages"] = []
+st.sidebar.title("Navigation")
 
-# 2. Display the "Suggested Questions" button ONLY if the chat is empty
-if len(st.session_state["messages"]) == 0:
-    assistant_message_suggested = st.chat_message("assistant", avatar=avatar_url)
-    if assistant_message_suggested.button("Click to show suggested questions"):
-        questions = generate_questions_cached()
-        for i, question in enumerate(questions):
-            time.sleep(0.05)
-            st.button(question, on_click=set_question, args=(question,))
+# Navigation buttons
+if st.sidebar.button("🤖 FSI AI", use_container_width=True, type="primary" if st.session_state["page"] == "FSI AI" else "secondary"):
+    st.session_state["page"] = "FSI AI"
+    st.rerun()
 
-# 3. Loop through and draw all past messages
-for msg in st.session_state["messages"]:
-    if msg["role"] == "user":
-        st.chat_message("user").write(msg["content"])
-    elif msg["role"] == "assistant":
-        with st.chat_message("assistant", avatar=avatar_url):
-            if msg.get("error"):
-                st.error(msg["error"])
-            else:
-                if msg.get("sql") and st.session_state.get("show_sql", True):
-                    st.code(msg["sql"], language="sql", line_numbers=True)
-                    
-                if msg.get("df") is not None and st.session_state.get("show_table", True):
-                    df = msg["df"]
-                    # 1. Provide the download button for the FULL dataframe
-                    csv = convert_df_to_csv(df)
-                    st.download_button(
-                         label=f"📥 Download Full Data ({len(df)} rows)",
-                         data=csv,
-                         file_name='fsi_data_export.csv',
-                         mime='text/csv',
-                         key=f"download_hist_{uuid.uuid4()}" # Unique key required for Streamlit buttons
-                    )
-                    if len(df) > 10:
-                        st.caption(f"Showing first 10 of {len(df)} rows below:")
-                        st.dataframe(df.head(10))
-                    else:
-                        st.dataframe(df)
+if st.sidebar.button("📊 Operations", use_container_width=True, type="primary" if st.session_state["page"] == "Operations" else "secondary"):
+    st.session_state["page"] = "Operations"
+    st.rerun()
+
+
+# ------------------------------------------------------------
+# PAGE ROUTING INTERFACES
+# ------------------------------------------------------------
+
+if st.session_state["page"] == "FSI AI":
+    st.title("FSI AI")
+
+    def set_question(question):
+        st.session_state["my_question"] = question
+
+    # 1. Initialize the chat history list if it doesn't exist yet
+    if "messages" not in st.session_state:
+        st.session_state["messages"] = []
+
+    # 2. Display the "Suggested Questions" button ONLY if the chat is empty
+    if len(st.session_state["messages"]) == 0:
+        assistant_message_suggested = st.chat_message("assistant", avatar=avatar_url)
+        if assistant_message_suggested.button("Click to show suggested questions"):
+            questions = generate_questions_cached()
+            for i, question in enumerate(questions):
+                time.sleep(0.05)
+                st.button(question, on_click=set_question, args=(question,))
+
+    # 3. Loop through and draw all past messages
+    for msg in st.session_state["messages"]:
+        if msg["role"] == "user":
+            st.chat_message("user").write(msg["content"])
+        elif msg["role"] == "assistant":
+            with st.chat_message("assistant", avatar=avatar_url):
+                if msg.get("error"):
+                    st.error(msg["error"])
+                else:
+                    # Defaulting global flags to True/False explicitly now that toggles are removed
+                    if msg.get("sql"):
+                        st.code(msg["sql"], language="sql", line_numbers=True)
                         
-                if msg.get("plotly_code") and st.session_state.get("show_plotly_code", False):
-                    st.code(msg["plotly_code"], language="python", line_numbers=True)
-                if msg.get("fig") and st.session_state.get("show_chart", True):
-                    st.plotly_chart(msg["fig"])
-                if msg.get("summary") and st.session_state.get("show_summary", True):
-                    st.text(msg["summary"])
+                    if msg.get("df") is not None:
+                        df = msg["df"]
+                        # Provide the download button for the FULL dataframe
+                        csv = convert_df_to_csv(df)
+                        st.download_button(
+                             label=f"📥 Download Full Data ({len(df)} rows)",
+                             data=csv,
+                             file_name='fsi_data_export.csv',
+                             mime='text/csv',
+                             key=f"download_hist_{uuid.uuid4()}" 
+                        )
+                        if len(df) > 10:
+                            st.caption(f"Showing first 10 of {len(df)} rows below:")
+                            st.dataframe(df.head(10))
+                        else:
+                            st.dataframe(df)
+                            
+                    if msg.get("fig"):
+                        st.plotly_chart(msg["fig"])
+                    if msg.get("summary"):
+                        st.text(msg["summary"])
 
-# 4. Always show the input box
-user_input = st.chat_input("Ask me a question about your data")
+    # 4. Always show the input box
+    user_input = st.chat_input("Ask me a question about your data")
 
-# Determine the current question (from chat input OR from clicking a suggestion)
-my_question = None
-if user_input:
-    my_question = user_input
-elif st.session_state.get("my_question"):
-    my_question = st.session_state["my_question"]
-    # Clear it so it doesn't trigger again on the next UI rerun
-    st.session_state["my_question"] = None 
+    # Determine the current question (from chat input OR from clicking a suggestion)
+    my_question = None
+    if user_input:
+        my_question = user_input
+    elif st.session_state.get("my_question"):
+        my_question = st.session_state["my_question"]
+        # Clear it so it doesn't trigger again on the next UI rerun
+        st.session_state["my_question"] = None 
 
-# 5. Process the NEW question
-if my_question:
-    # Append user question to history
-    st.session_state["messages"].append({"role": "user", "content": my_question})
-    st.chat_message("user").write(my_question)
-    
-    # Process assistant response inside its chat bubble
-    with st.chat_message("assistant", avatar=avatar_url):
-        # We'll build a dictionary to save this turn's data to history
-        turn_data = {"role": "assistant"}
-
-        history_msgs = build_history_messages(st.session_state["messages"][:-1])
-        sql, df = generate_sql_cached(question=my_question, history=history_msgs)
+    # 5. Process the NEW question
+    if my_question:
+        # Append user question to history
+        st.session_state["messages"].append({"role": "user", "content": my_question})
+        st.chat_message("user").write(my_question)
         
-        if sql and is_sql_valid_cached(sql=sql):
-            turn_data["sql"] = sql
-            if st.session_state.get("show_sql", True):
-                st.code(sql, language="sql", line_numbers=True)
+        # Process assistant response inside its chat bubble
+        with st.chat_message("assistant", avatar=avatar_url):
+            # We'll build a dictionary to save this turn's data to history
+            turn_data = {"role": "assistant"}
+
+            history_msgs = build_history_messages(st.session_state["messages"][:-1])
+            sql, df = generate_sql_cached(question=my_question, history=history_msgs)
             
-            if df is not None:
-                turn_data["df"] = df
-                if st.session_state.get("show_table", True):
+            if sql and is_sql_valid_cached(sql=sql):
+                turn_data["sql"] = sql
+                st.code(sql, language="sql", line_numbers=True)
+                
+                if df is not None:
+                    turn_data["df"] = df
 
                     # Custom Download Button for the Active Turn
                     csv = convert_df_to_csv(df)
@@ -193,38 +218,30 @@ if my_question:
                         st.dataframe(df.head(10))
                     else:
                         st.dataframe(df)
-                        
-                if should_generate_chart_cached(question=my_question, sql=sql, df=df):
-                    code = generate_plotly_code_cached(question=my_question, sql=sql, df=df)
-                    turn_data["plotly_code"] = code
-                    if st.session_state.get("show_plotly_code", False):
-                        st.code(code, language="python", line_numbers=True)
-                        
-                    if code:
-                        fig = generate_plot_cached(code=code, df=df)
-                        if fig:
-                            turn_data["fig"] = fig
-                            if st.session_state.get("show_chart", True):
-                                st.plotly_chart(fig)
-                        else:
-                            st.error("I couldn't generate a chart")
                             
-                summary = generate_summary_cached(question=my_question, df=df)
-                if summary:
-                    turn_data["summary"] = summary
-                    if st.session_state.get("show_summary", True):
+                    if should_generate_chart_cached(question=my_question, sql=sql, df=df):
+                        code = generate_plotly_code_cached(question=my_question, sql=sql, df=df)
+                        if code:
+                            fig = generate_plot_cached(code=code, df=df)
+                            if fig:
+                                turn_data["fig"] = fig
+                                st.plotly_chart(fig)
+                            else:
+                                st.error("I couldn't generate a chart")
+                                
+                    summary = generate_summary_cached(question=my_question, df=df)
+                    if summary:
+                        turn_data["summary"] = summary
                         st.text(summary)
-                        
-                # Follow-up questions (we don't save these to history, just show them for the active turn)
-                if st.session_state.get("show_followup", True):
-                    followup_questions = generate_followup_cached(question=my_question, sql=sql, df=df)
-                    if followup_questions:
-                        st.text("Here are some possible follow-up questions")
-                        for q in followup_questions[:5]:
-                            st.button(q, on_click=set_question, args=(q,))
-        else:
-            turn_data["error"] = "I wasn't able to generate SQL for that question or the query was unsupported."
-            st.error(turn_data["error"])
-            
-        # Finally, append the full assistant response to the history
-        st.session_state["messages"].append(turn_data)
+                            
+            else:
+                turn_data["error"] = "I wasn't able to generate SQL for that question or the query was unsupported."
+                st.error(turn_data["error"])
+                
+            # Finally, append the full assistant response to the history
+            st.session_state["messages"].append(turn_data)
+
+elif st.session_state["page"] == "Operations":
+    st.title("Operations Activity Logs")
+    st.info("This section will display real-time physical analytics and pipeline metrics soon.")
+    # Keep this canvas empty as requested for your future operational metrics feature.
