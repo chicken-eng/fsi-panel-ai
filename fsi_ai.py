@@ -760,35 +760,22 @@ def add_export_exclusion_to_sql(sql: str, project_number: str) -> str:
     return wrapped_sql
 
 
-def extract_filters_from_sql(sql: str) -> str:
+def extract_base_sql_for_storage(sql: str) -> str:
     """
-    Extracts the WHERE clause from the SQL and strips standard boilerplate
-    (unsubscribe blacklist, export exclusion) to isolate the user's filters.
-    Stored in export_tracker.filters for audit purposes.
+    Strips the export exclusion wrapper if it exists, returning the pure 
+    AI-generated SQL query so it can be safely re-run for operational metrics.
     """
+    # Looks for the injection wrapper and extracts only the inner AI query
     match = re.search(
-        r'\bWHERE\b(.*?)(?:\bGROUP\s+BY\b|\bORDER\s+BY\b|\bLIMIT\b|\bHAVING\b|$)',
-        sql,
-        re.IGNORECASE | re.DOTALL,
+        r"SELECT \* FROM \(\s*(.*?)\s*\)\s*AS final_output\s*WHERE final_output\.email NOT IN", 
+        sql, 
+        re.DOTALL | re.IGNORECASE
     )
-    if not match:
-        return ""
-
-    clause = match.group(1).strip()
-
-    # Remove unsubscribe blacklist boilerplate
-    clause = re.sub(
-        r'AND\s+\S+\.?email\s+NOT\s+IN\s*\(\s*SELECT\s+email\s+FROM\s+unsubscribe_blacklist\s*\)',
-        '', clause, flags=re.IGNORECASE,
-    )
-    # Remove the export_tracker exclusion we injected
-    clause = re.sub(
-        r'AND\s+\S+\.?email\s+NOT\s+IN\s*\(\s*SELECT\s+email\s+FROM\s+export_tracker[^)]*\)',
-        '', clause, flags=re.IGNORECASE | re.DOTALL,
-    )
-
-    clause = re.sub(r'\s+', ' ', clause).strip().strip('AND').strip()
-    return clause[:1000]
+    if match:
+        return match.group(1).strip()
+        
+    # If it's not wrapped, return the query as-is
+    return sql.strip()
 
 
 def get_already_exported_count(project_number: str) -> int:
@@ -870,7 +857,7 @@ def _handle_export_tracking(
         return
 
     emails = df[email_col].dropna().unique().tolist()
-    filters_str = extract_filters_from_sql(sql)
+    filters_str = extract_base_sql_for_storage(sql)
 
     with st.spinner(f"Tracking {len(emails)} records for project {project_number.upper()}..."):
         written = insert_export_tracking(emails, project_number, filters_str, is_override)
