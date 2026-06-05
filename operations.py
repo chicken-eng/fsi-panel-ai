@@ -51,14 +51,14 @@ def open_action_popup(row_data):
                 clean_sql = clean_sql_for_counts(raw_sql)
                 
                 # 1. Whole Sample: Count everything returned by this specific AI query
-                query_whole = """
+                query_whole = f"SELECT COUNT(DISTINCT TRIM(LOWER(email))) FROM ({clean_sql}) AS sub_whole"
+                
+                # 2. Launched Sample: Count emails exported under THIS SPECIFIC query string
+                query_launched = """
                     SELECT COUNT(DISTINCT TRIM(LOWER(email))) 
                     FROM export_tracker 
                     WHERE TRIM(LOWER(project_number)) = :pn AND filters = :raw_sql
                 """
-                
-                # 2. Launched Sample: Count emails exported under THIS SPECIFIC query string
-                query_launched = "SELECT COUNT(DISTINCT email) FROM export_tracker WHERE project_number = :pn AND filters = :raw_sql"
                 
                 # 3. Available Sample: Count everything from this query that is NOT in the tracker for the whole project
                 query_available = f"""
