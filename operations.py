@@ -1,35 +1,97 @@
-import streamlit as st
+import re
+import time
 import pandas as pd
+import streamlit as st
 from sqlalchemy import text
 from fsi_ai import get_engine
 
-# Define the popup/dialog box modal
+def get_project_sql(engine, project_number):
+    """Fetches the saved AI query for this project from the export tracker."""
+    query = "SELECT filters FROM export_tracker WHERE project_number = :pn LIMIT 1"
+    try:
+        with engine.connect() as conn:
+            # .scalar() returns the first column of the first row (the SQL string)
+            return conn.execute(text(query), {"pn": str(project_number).lower()}).scalar()
+    except Exception as e:
+        st.warning(f"Could not retrieve base SQL: {e}")
+        return None
+
+def clean_sql_for_counts(sql):
+    """Removes trailing semicolons and chops off any LIMIT clause at the end."""
+    sql = sql.strip().rstrip(";")
+    # Regex: Matches 'LIMIT ' followed by numbers at the very end of the string
+    sql = re.sub(r'(?i)\s+LIMIT\s+\d+\s*$', '', sql).strip()
+    return sql
+
 @st.dialog("Project Action Console")
 def open_action_popup(row_data):
     st.write(f"### Management Panel")
-    st.markdown(f"**Target Project State:** `{row_data.get('project_state', 'N/A')}`")
     
-    # Render full details in a clean key-value layout
-    st.json(row_data)
+    project_number = row_data.get('project_number', 'Unknown')
+    st.markdown(f"**Target Project:** `{project_number}` | **State:** `{row_data.get('project_state', 'N/A')}`")
     
+    st.divider()
+    
+    engine = get_engine()
+    
+    with st.spinner("Calculating live sample metrics..."):
+        base_sql = get_project_sql(engine, project_number)
+        
+        if not base_sql:
+            st.info("No saved filters/exports found for this project yet. Launch a sample from the FSI AI page to populate these metrics.")
+        else:
+            # 1. Clean the saved query
+            clean_sql = clean_sql_for_counts(base_sql)
+            
+            # 2. Define the three exact counting queries
+            # Whole Sample: Count everything returned by the clean AI query
+            query_whole = f"SELECT COUNT(*) FROM ({clean_sql}) AS sub_whole"
+            
+            # Launched Sample: Count unique emails explicitly saved in the tracker for this project
+            query_launched = "SELECT COUNT(DISTINCT email) FROM export_tracker WHERE project_number = :pn"
+            
+            # Available Sample: Count everything from the clean AI query that is NOT in the tracker
+            query_available = f"""
+                SELECT COUNT(*) FROM ({clean_sql}) AS sub_avail
+                WHERE sub_avail.email NOT IN (
+                    SELECT email FROM export_tracker WHERE project_number = '{str(project_number).lower()}'
+                )
+            """
+            
+            # 3. Execute queries
+            try:
+                with engine.connect() as conn:
+                    whole_count = conn.execute(text(query_whole)).scalar() or 0
+                    launched_count = conn.execute(text(query_launched), {"pn": str(project_number).lower()}).scalar() or 0
+                    available_count = conn.execute(text(query_available)).scalar() or 0
+                    
+                # 4. Render the metrics side-by-side
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Whole Sample", f"{whole_count:,}")
+                m2.metric("Launched Sample", f"{launched_count:,}")
+                m3.metric("Available Sample", f"{available_count:,}")
+                
+                # Optional: Let you inspect the cleaned SQL it ran for debugging
+                with st.expander("View Base Target Parameters (SQL)"):
+                    st.code(clean_sql, language="sql")
+                    
+            except Exception as e:
+                st.error("Failed to execute sample calculations against the database.")
+                st.exception(e)
+
     st.divider()
     st.info("⚡ This popup is ready to process customized operational actions.")
     
-    # Blank placeholder for your future custom database query execution
     if st.button("Execute Action Query", type="primary", use_container_width=True):
-        # Here you will write your connection and run_query code later
         st.success("Query placeholder executed successfully!")
 
 def show_operations_page():
     st.title("Operations Activity Logs")
-    
-    # 1. Subheading requested
     st.subheader("Open projects")
     
-    # 2. Reusing your existing database connection engine
-    engine = get_engine()         
+    engine = get_engine()
     query = "SELECT project_number, project_name, project_type, topic, sharepoint_link, created_date FROM projects WHERE project_state = 'Open';"
-
+    
     # ------------------------------------------------------------
     # NEON SERVERLESS WAKEUP BUFFER
     # ------------------------------------------------------------
@@ -41,18 +103,15 @@ def show_operations_page():
         for attempt in range(max_retries):
             try:
                 with engine.connect() as conn:
-                    # Execute an ultra-lightweight ping query to force compute spin-up
                     conn.execute(text("SELECT 1"))
                     db_awake = True
                     break
             except Exception as e:
                 error_str = str(e).lower()
-                # Track typical neon cold start errors
                 is_conn_error = any(keyword in error_str for keyword in [
                     "connection", "timeout", "closed", "ssl", "operationalerror"
                 ])
                 if is_conn_error and attempt < max_retries - 1:
-                    # Keep user informed while waiting for compute scaling
                     st.caption(f"⏳ Neon compute node is waking up... (Attempt {attempt + 1}/{max_retries})")
                     time.sleep(delay)
                 else:
@@ -63,35 +122,27 @@ def show_operations_page():
         return
 
     # ------------------------------------------------------------
-    # DATA RETRIEVAL & LAYOUT (Now fully safe from cold starts)
+    # DATA RETRIEVAL & LAYOUT
     # ------------------------------------------------------------
-    
     try:
         with engine.connect() as conn:
-            # Safely pull data directly into a pandas dataframe
             df = pd.read_sql(text(query), conn)
         
         if not df.empty:
             st.caption("💡 Highlight any row below to trigger the operations action popup.")
             
-            # hide_index=True eliminates the column of numbers entirely
-            # on_select="rerun" turns the entire grid into clickable row links
             selection = st.dataframe(
                 df,
                 use_container_width=True,
                 hide_index=True,
                 on_select="rerun",
-                selection_mode="single-row"
+                selection_mode="single-row" 
             )
             
-            # Catch when a user selects a specific table row
             if selection and selection.get("selection", {}).get("rows"):
                 selected_row_idx = selection["selection"]["rows"][0]
-                
-                # Extract the exact row content into a clean dictionary map
                 row_data = df.iloc[selected_row_idx].to_dict()
                 
-                # Launch the popup modal overlay passing the contextual details
                 open_action_popup(row_data)
                 
         else:
