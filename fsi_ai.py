@@ -135,17 +135,17 @@ def get_schema_description() -> str:
     try:
         with db.engine.connect() as conn:
             # 1. Get all tables in public schema
-            tables_result = conn.execute(text("""
+            tables_result = conn.execute("""
                 SELECT table_name 
                 FROM information_schema.tables 
                 WHERE table_schema = 'public' 
                   AND table_type = 'BASE TABLE'
                 ORDER BY table_name
-            """))
+            """)
             tables = [row[0] for row in tables_result]
 
             # 2. Get columns + constraints for each table
-            cols_result = conn.execute(text("""
+            cols_result = conn.execute("""
                 SELECT 
                     cols.table_name,
                     cols.column_name,
@@ -163,7 +163,7 @@ def get_schema_description() -> str:
                 WHERE cols.table_schema = 'public'
                   AND cols.table_name = ANY(:tables)
                 ORDER BY cols.table_name, cols.ordinal_position
-            """), {"tables": tables})
+            """), {"tables": tables}
 
             # 3. Group columns by table
             table_cols = defaultdict(list)
@@ -181,7 +181,7 @@ def get_schema_description() -> str:
                 table_cols[table_name].append(col_str)
 
             # 3. Get foreign key relationships
-            fk_result = conn.execute(text("""
+            fk_result = conn.execute("""
                 SELECT
                     kcu.table_name AS from_table,
                     kcu.column_name AS from_col,
@@ -198,7 +198,7 @@ def get_schema_description() -> str:
                   AND tc.table_schema = 'public'
                   AND kcu.table_name = ANY(:tables)
                 ORDER BY kcu.table_name
-            """), {"tables": tables})
+            """), {"tables": tables}
 
             relationships = defaultdict(list)
             for row in fk_result:
@@ -560,7 +560,7 @@ def run_query(sql: str, max_retries: int = 5, delay: int = 3) -> pd.DataFrame | 
             try:
                 with db.engine.connect() as conn:
                     status.update(label="Executing query...", state="running")
-                    result = conn.execute(text(sql))
+                    result = conn.execute(sql)
                     df = pd.DataFrame(result.fetchall(), columns=result.keys())
                     status.update(label="Query successful!",
                                   state="complete", expanded=False)
@@ -607,23 +607,23 @@ def get_column_samples(sql: str) -> str:
         with db.engine.connect() as conn:
             for table in set(tables):
                 try:
-                    col_result = conn.execute(text(f"""
+                    col_result = conn.execute(f"""
                         SELECT column_name 
                         FROM information_schema.columns 
                         WHERE table_name = '{table}' 
                         AND data_type IN ('text', 'character varying', 'USER-DEFINED')
                         LIMIT 8
-                    """))
+                    """)
                     columns = [row[0] for row in col_result]
 
                     for col in columns:
                         try:
-                            val_result = conn.execute(text(f"""
+                            val_result = conn.execute(f"""
                                 SELECT DISTINCT {col} 
                                 FROM {table} 
                                 WHERE {col} IS NOT NULL 
                                 LIMIT 5
-                            """))
+                            """)
                             values = [str(row[0]) for row in val_result]
                             if values:
                                 samples.append(
@@ -662,13 +662,13 @@ def get_real_columns_for_sql(sql: str) -> str:
         with db.engine.connect() as conn:
             for table in set(tables):
                 try:
-                    result = conn.execute(text("""
+                    result = conn.execute("""
                         SELECT column_name, data_type
                         FROM information_schema.columns
                         WHERE table_schema = 'public'
                           AND table_name = :table
                         ORDER BY ordinal_position
-                    """), {"table": table})
+                    """), {"table": table}
                     cols = [f"{row[0]} ({row[1]})" for row in result]
                     if cols:
                         lines.append(
@@ -783,14 +783,13 @@ def insert_export_tracking(
 
     try:
         with db.engine.begin() as conn:
-            conn.execute(
-                text(f"""
+            conn.execute
+                   (f"""
                     INSERT INTO export_tracker (email, project_number, filters, datetimestamp)
                     SELECT unnest(CAST(:emails AS varchar[])), :pn, :filters, NOW() AT TIME ZONE 'UTC'
                     ON CONFLICT (email, project_number) {conflict}
                 """),
                 {"emails": emails, "pn": project_number, "filters": filters_str}
-            )
     except Exception as e:
         st.error(f"Export tracking insert failed: {e}")
         return 0
