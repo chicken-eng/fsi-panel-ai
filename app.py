@@ -13,8 +13,14 @@ from fsi_ai import (
     is_sql_valid_cached,
     generate_summary_cached
 )
-
 from operations import show_operations_page
+from database import get_db
+
+db = get_db()
+try:
+    db.ensure_awake()
+except Exception as e:
+    st.error("⚠️ Failed to establish persistent database bridge on startup.")
 
 def build_history_messages(messages: list, max_turns: int = 3) -> list:
     """
