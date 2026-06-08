@@ -752,7 +752,7 @@ def get_already_exported_count(project_number: str) -> int:
     db = get_db()
     try:
         result = db.execute("SELECT COUNT(*) FROM export_tracker WHERE project_number = :pn", {"pn": project_number})
-            return result.scalar() or 0
+        return result.scalar() or 0
     except Exception as e:
         st.warning(f"Could not query export_tracker: {e}")
         return 0
