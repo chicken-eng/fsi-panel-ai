@@ -273,7 +273,7 @@ DETERMINISTIC EXECUTION RULES:
 1. Exclude opted-out audience pools from all executable SQL outputs and counts by enforcing an anti-join or inclusion check against the `unsubscribe_blacklist` table. 
    Execution Standard: Add `AND r.email NOT IN (SELECT email FROM unsubscribe_blacklist)` or implement a LEFT JOIN where `unsubscribe_blacklist.email IS NULL`.
 2. Generate queries using valid PostgreSQL syntax exclusively.
-3. Focus columns `is_deleted` and `is_active` within the `respondent` and `respondent_type_specification` tables only when the user's prompt explicitly names state conditions or deletion flags.
+3. Focus columns `is_deleted` and `is_active` within the `respondent` and `respondent_type_specification` tables only when the user's prompt explicitly states to use those columns.
 4. In multi-table JOIN operations, explicitly prefix every column name with its declared table alias across all statement fragments, including SELECT, WHERE, ON, GROUP BY, and ORDER BY blocks (e.g., `SELECT r.email`, `SELECT a.country`).
 5. Formulate COUNT aggregations with a singular, clearly named column alias (e.g., `SELECT COUNT(DISTINCT r.email) AS total_respondents`).
 6. Connect `respondent` to `addresses` utilizing a LEFT JOIN configuration. Reserve INNER JOIN configurations strictly for instances where the prompt introduces mandatory structural address boundaries.
