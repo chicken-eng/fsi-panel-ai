@@ -66,7 +66,7 @@ def open_action_popup(row_data):
     db = get_db()
     
     with st.spinner("Calculating live sample metrics..."):
-        base_sqls = get_all_project_sqls(engine, project_number)
+        base_sqls = get_all_project_sqls(project_number)
         
         if not base_sqls:
             st.info("No saved filters/exports found for this project yet. Launch a sample from the FSI AI page to populate these metrics.")
