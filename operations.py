@@ -17,7 +17,7 @@ def get_all_project_sqls(project_number):
     """
     try:
         # Wrap query string in text() for SQLAlchemy 2.0 conformance
-        result = db.execute(text(query), {"pn": str(project_number).lower()})
+        result = db.execute(query), {"pn": str(project_number).lower()}
         return [row[0] for row in result]
     except Exception as e:
         st.warning(f"Could not retrieve base SQLs: {e}")
