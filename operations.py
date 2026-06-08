@@ -190,11 +190,7 @@ def open_action_popup(row_data):
                         # Loop through every row/batch item to isolate them vertically
                         for idx, row in batch_df.iterrows():
                             # Clean stacked metric row representation
-                            b_col1, b_col2 = st.columns([1, 2])
-                            with b_col1:
-                                st.markdown(f"📅 **Export Date:** `{row['Export Date']}`")
-                            with b_col2:
-                                st.markdown(f"✉️ **Emails Exported:** `{row['Emails Exported']:,}`")
+                            st.markdown(f"📅 **Export Date:** `{row['Export Date']}`   |   ✉️ **Emails Exported:** `{row['Emails Exported']:,}`")
                             
                             # Places the SQL expander directly below this specific row 
                             with st.expander("View Base Target Parameters (SQL)", expanded=False):
