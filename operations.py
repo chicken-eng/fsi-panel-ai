@@ -195,8 +195,6 @@ def open_action_popup(row_data):
                             # Places the SQL expander directly below this specific row 
                             with st.expander("View Base Target Parameters (SQL)", expanded=False):
                                 st.code(clean_sql, language="sql")
-                            
-                            st.write("---") # Visual break between multiple batches if they exist
                     else:
                         # No batch data yet — just show SQL
                         with st.expander("View Base Target Parameters (SQL)", expanded=False):
