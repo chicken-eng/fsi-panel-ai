@@ -158,7 +158,7 @@ def open_action_popup(row_data):
                     """
                 # Execute the queries for this specific loop iteration
                 try:
-                    with db.connect() as conn:
+                    with db.engine.connect() as conn:
                         pn_clean = str(project_number).lower().strip()
                         
                         whole_count = db.execute(query_whole, {
