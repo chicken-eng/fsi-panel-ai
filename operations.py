@@ -82,7 +82,7 @@ def open_action_popup(row_data):
                             "raw_sql": raw_sql
                         }).scalar() or 0
                         drifted_count  = conn.execute(text(query_drifted), {
-                            "pn": pn_clean
+                            "pn": pn_clean,
                             "raw_sql": raw_sql
                         }).scalar() or 0
 
