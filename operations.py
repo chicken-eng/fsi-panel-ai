@@ -84,6 +84,23 @@ def open_action_popup(row_data):
                 clean_sql = clean_sql_for_counts(raw_sql)
                 pn_clean  = str(project_number).lower().strip()
 
+                if i == 0:
+                    # First target audience: Just show the pure demographic SQL
+                    display_sql = clean_sql
+                else:
+                    # Subsequent audiences: Wrap it to show the visual exclusion logic
+                    display_sql = (
+                        f"SELECT * FROM (\n"
+                        f"    {clean_sql}\n"
+                        f") AS final_output\n"
+                        f"WHERE final_output.email NOT IN (\n"
+                        f"    SELECT email \n"
+                        f"    FROM export_tracker\n"
+                        f"    WHERE project_number = '{pn_clean}'\n"
+                        f"    AND filters != '<< THIS CURRENT DEMOGRAPHIC QUERY >>'\n"
+                        f");"
+                    )
+
                 # ── Detect which date conditions exist in this SQL ──────────
                 age_condition    = extract_dob_age_condition(clean_sql)
                 update_condition = extract_update_date_condition(clean_sql)
@@ -218,11 +235,11 @@ def open_action_popup(row_data):
                             
                             # Places the SQL expander directly below this specific row 
                             with st.expander("View Base Target Parameters (SQL)", expanded=False):
-                                st.code(clean_sql, language="sql")
+                                st.code(display_sql, language="sql")
                     else:
                         # No batch data yet — just show SQL
                         with st.expander("View Base Target Parameters (SQL)", expanded=False):
-                            st.code(clean_sql, language="sql")
+                            st.code(display_sql, language="sql")
 
                 except Exception as e:
                     st.error("Failed to execute sample calculations against the database.")
