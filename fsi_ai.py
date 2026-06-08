@@ -778,19 +778,19 @@ def insert_export_tracking(
         "DO UPDATE SET filters = EXCLUDED.filters, datetimestamp = EXCLUDED.datetimestamp"
         if is_override else "DO NOTHING"
     )
-   
+
     db = get_db()
 
     try:
         with db.engine.begin() as conn:
-    conn.execute(
-        f"""
-        INSERT INTO export_tracker (email, project_number, filters, datetimestamp)
-        SELECT unnest(CAST(:emails AS varchar[])), :pn, :filters, NOW() AT TIME ZONE 'UTC'
-        ON CONFLICT (email, project_number) {conflict}
-        """,
-        {"emails": emails, "pn": project_number, "filters": filters_str}
-    )
+            conn.execute(
+                f"""
+                INSERT INTO export_tracker (email, project_number, filters, datetimestamp)
+                SELECT unnest(CAST(:emails AS varchar[])), :pn, :filters, NOW() AT TIME ZONE 'UTC'
+                ON CONFLICT (email, project_number) {conflict}
+                """,
+                {"emails": emails, "pn": project_number, "filters": filters_str}
+            )
     except Exception as e:
         st.error(f"Export tracking insert failed: {e}")
         return 0
