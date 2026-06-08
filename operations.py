@@ -7,7 +7,13 @@ from fsi_ai import get_engine
 
 def get_all_project_sqls(engine, project_number):
     """Fetches ALL distinct saved AI queries for this project from the export tracker."""
-    query = "SELECT DISTINCT filters FROM export_tracker WHERE project_number = :pn AND filters IS NOT NULL"
+    query = """
+        SELECT filters 
+        FROM export_tracker 
+        WHERE project_number = :pn AND filters IS NOT NULL 
+        GROUP BY filters 
+        ORDER BY MIN(datetimestamp) ASC
+    """
     try:
         with engine.connect() as conn:
             # Fetch all distinct sql strings and return them as a list
@@ -89,16 +95,21 @@ def open_action_popup(row_data):
                 has_date_drift = bool(drift_parts)
                 
                 # 1. Whole Sample: Count everything returned by this specific AI query
-                query_whole = f"""
-                    SELECT COUNT(DISTINCT TRIM(LOWER(email))) 
-                    FROM ({clean_sql}) AS sub_whole
-                    WHERE TRIM(LOWER(email)) NOT IN (
-                        SELECT TRIM(LOWER(email)) 
-                        FROM export_tracker 
-                        WHERE TRIM(LOWER(project_number)) = :pn 
-                        AND filters != :raw_sql
-                    )
-                """
+                if i == 0:
+                    # Target Audience #1: Show the true grand total demographic pool (no exclusions)
+                    query_whole = f"SELECT COUNT(DISTINCT TRIM(LOWER(email))) FROM ({clean_sql}) AS sub_whole"
+                else:
+                    # Target Audience #2+: Show available pool MINUS anyone claimed by previous project queries
+                    query_whole = f"""
+                        SELECT COUNT(DISTINCT TRIM(LOWER(email))) 
+                        FROM ({clean_sql}) AS sub_whole
+                        WHERE TRIM(LOWER(email)) NOT IN (
+                            SELECT TRIM(LOWER(email)) 
+                            FROM export_tracker 
+                            WHERE TRIM(LOWER(project_number)) = :pn 
+                            AND filters != :raw_sql
+                        )
+                    """
                 
                 # 2. Launched Sample: Count emails exported under THIS SPECIFIC query string
                 query_launched = """
