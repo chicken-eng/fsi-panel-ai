@@ -59,18 +59,19 @@ def open_action_popup(row_data):
                     FROM export_tracker 
                     WHERE TRIM(LOWER(project_number)) = :pn AND filters = :raw_sql
                 """
-                
-                # 3. Available Sample: Count everything from this query that is NOT in the tracker for the whole project
-                query_available = f"""
-                    SELECT COUNT(DISTINCT TRIM(LOWER(email))) 
-                    FROM ({clean_sql}) AS sub_avail
-                    WHERE sub_avail.email IS NOT NULL 
-                    AND TRIM(LOWER(sub_avail.email)) NOT IN (
-                        SELECT TRIM(LOWER(email)) FROM export_tracker 
-                        WHERE TRIM(LOWER(project_number)) = :pn AND email IS NOT NULL
-                    )
+                # 4. Drifted: exported emails that no longer appear in the current SQL results
+                query_drifted = f"""
+                    SELECT COUNT(DISTINCT TRIM(LOWER(et.email)))
+                    FROM export_tracker et
+                    WHERE TRIM(LOWER(et.project_number)) = :pn
+                    AND et.filters = :raw_sql
+                    AND et.email IS NOT NULL
+                    AND TRIM(LOWER(et.email)) NOT IN (
+                        SELECT TRIM(LOWER(sub.email)) 
+                        FROM ({clean_sql}) AS sub
+                        WHERE sub.email IS NOT NULL
+                   )
                 """
-                
                 # Execute the queries for this specific loop iteration
                 try:
                     with engine.connect() as conn:
@@ -80,15 +81,31 @@ def open_action_popup(row_data):
                             "pn": pn_clean,
                             "raw_sql": raw_sql
                         }).scalar() or 0
-                        available_count = conn.execute(text(query_available), {
+                        drifted_count  = conn.execute(text(query_drifted), {
                             "pn": pn_clean
+                            "raw_sql": raw_sql
                         }).scalar() or 0
-                        
+
+                    available_count = whole_count - launched_count
+
+                    if available_count < 0:
+                       st.warning(
+                           f"⚠️ Pool has shrunk: {launched_count:,} exported "
+                           f"but only {whole_count:,} currently qualify. "
+                           f"Investigate before launching further."
+                       )
+                       available_count = 0
+                    else:
+                       pass
+                    
                     # Render the metrics
-                    m1, m2, m3 = st.columns(3)
+                    m1, m2, m3, m4 = st.columns(4)
                     m1.metric("Whole Sample", f"{whole_count:,}")
                     m2.metric("Launched Sample", f"{launched_count:,}")
                     m3.metric("Available Sample", f"{available_count:,}")
+                    m4.metric("Drifted Out",      f"{drifted_count:,}",            # ← new
+                               delta=f"-{drifted_count:,}" if drifted_count > 0 else None,
+                               delta_color="inverse")
                     
                     # Expandable code block for inspection
                     with st.expander("View Base Target Parameters (SQL)"):
