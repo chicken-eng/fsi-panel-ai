@@ -24,6 +24,33 @@ def clean_sql_for_counts(sql):
     sql = re.sub(r'(?i)\s+LIMIT\s+\d+\s*$', '', sql).strip()
     return sql
 
+_DOB_AGE_RE = re.compile(
+    r'EXTRACT\s*\(\s*YEAR\s+FROM\s+AGE\s*\(\s*NOW\s*\(\s*\)\s*,\s*\w+\.date_of_birth\s*\)\s*\)\s*'
+    r'(?:BETWEEN\s+\d+\s+AND\s+\d+|(?:<=|>=|<|>|!=)\s*\d+)',
+    re.IGNORECASE
+)
+
+_UPDATE_DATE_RE = re.compile(
+    r'(?:\w+\.)?update_date\s*(?:BETWEEN\s+\S+\s+AND\s+\S+|(?:<=|>=|<|>|!=)\s*\S+)',
+    re.IGNORECASE
+)
+
+def extract_dob_age_condition(sql: str) -> str | None:
+    """
+    Extracts the EXTRACT(YEAR FROM AGE(NOW(), date_of_birth)) condition
+    from a SQL string. Returns the full condition string or None if absent.
+    """
+    match = _DOB_AGE_RE.search(sql)
+    return match.group(0) if match else None
+
+def extract_update_date_condition(sql: str) -> str | None:
+    """
+    Extracts the update_date comparison condition from a SQL string.
+    Returns the condition string or None if absent.
+    """
+    match = _UPDATE_DATE_RE.search(sql)
+    return match.group(0) if match else None
+
 @st.dialog("Project Action Console")
 def open_action_popup(row_data):
     st.write(f"### Management Panel")
@@ -49,6 +76,17 @@ def open_action_popup(row_data):
                     st.markdown(f"#### Target Audience Definition #{i + 1}")
                     
                 clean_sql = clean_sql_for_counts(raw_sql)
+                pn_clean  = str(project_number).lower().strip()
+
+                # ── Detect which date conditions exist in this SQL ──────────
+                age_condition    = extract_dob_age_condition(clean_sql)
+                update_condition = extract_update_date_condition(clean_sql)
+                drift_parts = []
+                if age_condition:
+                    drift_parts.append(f"NOT ({age_condition})")
+                if update_condition:
+                    drift_parts.append(f"NOT ({update_condition})")
+                has_date_drift = bool(drift_parts)
                 
                 # 1. Whole Sample: Count everything returned by this specific AI query
                 query_whole = f"SELECT COUNT(DISTINCT TRIM(LOWER(email))) FROM ({clean_sql}) AS sub_whole"
@@ -57,68 +95,119 @@ def open_action_popup(row_data):
                 query_launched = """
                     SELECT COUNT(DISTINCT TRIM(LOWER(email))) 
                     FROM export_tracker 
-                    WHERE TRIM(LOWER(project_number)) = :pn AND filters = :raw_sql
+                    WHERE TRIM(LOWER(project_number)) = :pn AND filters = :raw_sql AND email IS NOT NULL
                 """
-                # 4. Drifted: exported emails that no longer appear in the current SQL results
-                query_drifted = f"""
-                    SELECT COUNT(DISTINCT TRIM(LOWER(et.email)))
-                    FROM export_tracker et
-                    WHERE TRIM(LOWER(et.project_number)) = :pn
-                    AND et.filters = :raw_sql
-                    AND et.email IS NOT NULL
-                    AND TRIM(LOWER(et.email)) NOT IN (
-                        SELECT TRIM(LOWER(sub.email)) 
-                        FROM ({clean_sql}) AS sub
-                        WHERE sub.email IS NOT NULL
-                   )
+
+                query_batches = """
+                    SELECT
+                        DATE(datetimestamp)                      AS export_date,
+                        COUNT(DISTINCT TRIM(LOWER(email)))       AS exported
+                    FROM export_tracker
+                    WHERE TRIM(LOWER(project_number)) = :pn
+                    AND filters = :raw_sql
+                    AND email IS NOT NULL
+                    GROUP BY DATE(datetimestamp)
+                    ORDER BY DATE(datetimestamp)
                 """
+                if has_date_drift:
+                    # Only checks date conditions — NOT location, ethnicity, type etc.
+                    drift_filter  = " OR ".join(drift_parts)
+                    query_drifted = f"""
+                        SELECT COUNT(DISTINCT TRIM(LOWER(et.email)))
+                        FROM export_tracker et
+                        JOIN respondent r
+                            ON TRIM(LOWER(r.email)) = TRIM(LOWER(et.email))
+                        WHERE TRIM(LOWER(et.project_number)) = :pn
+                        AND et.filters = :raw_sql
+                        AND et.email IS NOT NULL
+                        AND ({drift_filter})
+                    """
                 # Execute the queries for this specific loop iteration
                 try:
                     with engine.connect() as conn:
                         pn_clean = str(project_number).lower().strip()
                         whole_count = conn.execute(text(query_whole)).scalar() or 0
+                        
                         launched_count = conn.execute(text(query_launched), {
                             "pn": pn_clean,
                             "raw_sql": raw_sql
                         }).scalar() or 0
-                        drifted_count  = conn.execute(text(query_drifted), {
-                            "pn": pn_clean,
-                            "raw_sql": raw_sql
-                        }).scalar() or 0
 
-                    available_count = whole_count - launched_count
+                        batch_result = conn.execute(
+                            text(query_batches), {"pn": pn_clean, "raw_sql": raw_sql}
+                        )
+                        batch_df = pd.DataFrame(
+                            batch_result.fetchall(), columns=batch_result.keys()
+                        )
+                        
+                        drifted_count = 0
+                        if has_date_drift:
+                            drifted_count = conn.execute(
+                                text(query_drifted), {"pn": pn_clean, "raw_sql": raw_sql}
+                            ).scalar() or 0
 
-                    if available_count < 0:
-                       st.warning(
-                           f"⚠️ Pool has shrunk: {launched_count:,} exported "
-                           f"but only {whole_count:,} currently qualify. "
-                           f"Investigate before launching further."
-                       )
-                       available_count = 0
-                    else:
-                       pass
                     
-                    # Render the metrics
-                    m1, m2, m3, m4 = st.columns(4)
+                    raw_available   = whole_count - launched_count
+                    available_count = max(0, raw_available)
+
+                    if has_date_drift:
+                        m1, m2, m3, m4 = st.columns(4)
+                        m4.metric(
+                            "Drifted Out",
+                            f"{drifted_count:,}",
+                            delta=f"-{drifted_count:,}" if drifted_count > 0 else None,
+                            delta_color="inverse",
+                            help="Exported respondents who no longer satisfy the age "
+                                 "or date-based criteria in the original query."
+                        )
+                    else:
+                        m1, m2, m3 = st.columns(3)
+                        
                     m1.metric("Whole Sample", f"{whole_count:,}")
                     m2.metric("Launched Sample", f"{launched_count:,}")
                     m3.metric("Available Sample", f"{available_count:,}")
-                    m4.metric("Drifted Out",      f"{drifted_count:,}",            # ← new
-                               delta=f"-{drifted_count:,}" if drifted_count > 0 else None,
-                               delta_color="inverse")
+
+                    # Warn if pool has shrunk below what was already exported
+                    if raw_available < 0:
+                        st.warning(
+                            f"⚠️ Pool has shrunk below launched count — "
+                            f"{launched_count:,} exported but only {whole_count:,} "
+                            "currently qualify. Investigate before launching further."
+                        )
                     
-                    # Expandable code block for inspection
-                    with st.expander("View Base Target Parameters (SQL)"):
-                        st.code(clean_sql, language="sql")
-                        
+                    if not batch_df.empty:
+                        batch_df = batch_df.rename(columns={
+                            "export_date": "Export Date",
+                            "exported":    "Emails Exported"
+                        })
+                        batch_df["Export Date"] = (
+                            pd.to_datetime(batch_df["Export Date"])
+                            .dt.strftime("%d %b %Y")
+                        )
+                        batch_df["Cumulative"] = batch_df["Emails Exported"].cumsum()
+
+                        left_col, right_col = st.columns([3, 2])
+                        with left_col:
+                            st.markdown("**Export Batches**")
+                            st.dataframe(
+                                batch_df, hide_index=True, use_container_width=True
+                            )
+                        with right_col:
+                            with st.expander("View Base Target Parameters (SQL)", expanded=False):
+                                st.code(clean_sql, language="sql")
+                    else:
+                        # No batch data yet — just show SQL
+                        with st.expander("View Base Target Parameters (SQL)", expanded=False):
+                            st.code(clean_sql, language="sql")
+
                 except Exception as e:
                     st.error("Failed to execute sample calculations against the database.")
                     with st.expander("View Error Details"):
                         st.exception(e)
-                
-                # Add a divider between multiple queries for visual cleanliness, unless it's the last one
+
                 if i < len(base_sqls) - 1:
                     st.divider()
+
 
     st.divider()
     st.info("⚡ This popup is ready to process customized operational actions.")
