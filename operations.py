@@ -180,7 +180,7 @@ def open_action_popup(row_data):
                         
                         drifted_count = 0
                         if has_date_drift:
-                            drifted_count = conn.execute(
+                            drifted_count = db.execute(
                                 query_drifted, {"pn": pn_clean, "raw_sql": raw_sql}
                             ).scalar() or 0
 
