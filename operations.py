@@ -89,7 +89,16 @@ def open_action_popup(row_data):
                 has_date_drift = bool(drift_parts)
                 
                 # 1. Whole Sample: Count everything returned by this specific AI query
-                query_whole = f"SELECT COUNT(DISTINCT TRIM(LOWER(email))) FROM ({clean_sql}) AS sub_whole"
+                query_whole = f"""
+                    SELECT COUNT(DISTINCT TRIM(LOWER(email))) 
+                    FROM ({clean_sql}) AS sub_whole
+                    WHERE TRIM(LOWER(email)) NOT IN (
+                        SELECT TRIM(LOWER(email)) 
+                        FROM export_tracker 
+                        WHERE TRIM(LOWER(project_number)) = :pn 
+                        AND filters != :raw_sql
+                    )
+                """
                 
                 # 2. Launched Sample: Count emails exported under THIS SPECIFIC query string
                 query_launched = """
@@ -126,7 +135,11 @@ def open_action_popup(row_data):
                 try:
                     with engine.connect() as conn:
                         pn_clean = str(project_number).lower().strip()
-                        whole_count = conn.execute(text(query_whole)).scalar() or 0
+                        
+                        whole_count = conn.execute(text(query_whole), {
+                            "pn": pn_clean,
+                            "raw_sql": raw_sql
+                        }).scalar() or 0
                         
                         launched_count = conn.execute(text(query_launched), {
                             "pn": pn_clean,
