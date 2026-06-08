@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine, text
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
@@ -8,20 +7,8 @@ from langchain_core.runnables import RunnableSequence
 import time
 import re
 from collections import defaultdict
+from database import get_db
 
-# ----------------------------
-# Database connection
-# ----------------------------
-
-
-@st.cache_resource
-def get_engine():
-    url = (
-        f"postgresql+psycopg2://{st.secrets['DB_USER']}:{st.secrets['DB_PASSWORD']}"
-        f"@{st.secrets['DB_HOST']}:{st.secrets.get('DB_PORT', 5432)}/{st.secrets['DB_NAME']}"
-        f"?sslmode=require"
-    )
-    return create_engine(url)
 
 # ----------------------------
 # LLM Configuration
@@ -102,32 +89,14 @@ EXPORT_OVERRIDE_PHRASES = [
 def get_schema_description() -> str:
     """
     Pulls live schema from the database and formats it for the LLM"""
-    engine = get_engine()
-
-    # ------------------------------------------------------------
-    # NEON WAKEUP BUFFER
-    # ------------------------------------------------------------
-    max_retries = 5
-    delay = 3
+    db = get_db()
     db_awake = False
 
-    for attempt in range(max_retries):
-        try:
-            with engine.connect() as conn:
-                # Execute an ultra-lightweight ping query to force compute spin-up
-                conn.execute(text("SELECT 1"))
-                db_awake = True
-                break
-        except Exception as e:
-            error_str = str(e).lower()
-            is_conn_error = any(keyword in error_str for keyword in [
-                "connection", "timeout", "closed", "ssl", "operationalerror"
-            ])
-            if is_conn_error and attempt < max_retries - 1:
-                # Database is sleeping; wait and try again
-                time.sleep(delay)
-            else:
-                break
+    # ⚡ REPLACED MESSY MANUAL LOOP WITH CENTRALIZED WAKEUP ROUTINE
+    try:
+        db_awake = db.ensure_awake()
+    except Exception:
+        db_awake = False
 
     # Helper to construct a clean, structural context block from separate components
     def build_structured_payload(catalog_content: str) -> str:
@@ -164,7 +133,7 @@ def get_schema_description() -> str:
     # ------------------------------------------------------------
 
     try:
-        with engine.connect() as conn:
+        with db.engine.connect() as conn:
             # 1. Get all tables in public schema
             tables_result = conn.execute(text("""
                 SELECT table_name 
@@ -582,14 +551,14 @@ def is_complex_query(question: str) -> bool:
 
 def run_query(sql: str, max_retries: int = 5, delay: int = 3) -> pd.DataFrame | None:
     """Runs the query with a retry loop to handle Neon's cold starts."""
-    engine = get_engine()
+    db = get_db()
     df = None  # Initialize df here
 
     # st.status provides a spinner UI that we can update text for dynamically
     with st.status("Connecting to database...", expanded=True) as status:
         for attempt in range(max_retries):
             try:
-                with engine.connect() as conn:
+                with db.engine.connect() as conn:
                     status.update(label="Executing query...", state="running")
                     result = conn.execute(text(sql))
                     df = pd.DataFrame(result.fetchall(), columns=result.keys())
@@ -606,7 +575,7 @@ def run_query(sql: str, max_retries: int = 5, delay: int = 3) -> pd.DataFrame | 
 
                 if is_conn_error and attempt < max_retries - 1:
                     status.update(
-                        label=f"Waking up database... (Attempt {attempt + 1} of {max_retries})",
+                        label=f"Re-verifying bridge pool...(Attempt {attempt + 1} of {max_retries})",
                         state="running"
                     )
                     time.sleep(delay)  # Wait a few seconds before trying again
@@ -623,7 +592,7 @@ def run_query(sql: str, max_retries: int = 5, delay: int = 3) -> pd.DataFrame | 
 
 def get_column_samples(sql: str) -> str:
     """Looks at the SQL, finds the tables used, and fetches distinct values for text columns."""
-    engine = get_engine()
+    db = get_db()
     samples = []
 
     words = sql.lower().split()
@@ -635,7 +604,7 @@ def get_column_samples(sql: str) -> str:
                 tables.append(table)
 
     try:
-        with engine.connect() as conn:
+        with db.engine.connect() as conn:
             for table in set(tables):
                 try:
                     col_result = conn.execute(text(f"""
@@ -674,7 +643,7 @@ def get_real_columns_for_sql(sql: str) -> str:
     Given a SQL string, extracts all table names referenced and returns
     their real column lists from information_schema. Used for UndefinedColumn retries.
     """
-    engine = get_engine()
+    db = get_db()
     lines = []
 
     # Extract table names from FROM and JOIN clauses
@@ -690,7 +659,7 @@ def get_real_columns_for_sql(sql: str) -> str:
         return ""
 
     try:
-        with engine.connect() as conn:
+        with db.engine.connect() as conn:
             for table in set(tables):
                 try:
                     result = conn.execute(text("""
@@ -780,13 +749,9 @@ def extract_base_sql_for_storage(sql: str) -> str:
 
 def get_already_exported_count(project_number: str) -> int:
     """Total emails already tracked in export_tracker for a given project."""
-    engine = get_engine()
+    db = get_db()
     try:
-        with engine.connect() as conn:
-            result = conn.execute(
-                text("SELECT COUNT(*) FROM export_tracker WHERE project_number = :pn"),
-                {"pn": project_number},
-            )
+        result = db.execute("SELECT COUNT(*) FROM export_tracker WHERE project_number = :pn", {"pn": project_number})
             return result.scalar() or 0
     except Exception as e:
         st.warning(f"Could not query export_tracker: {e}")
@@ -814,10 +779,10 @@ def insert_export_tracking(
         if is_override else "DO NOTHING"
     )
    
-    engine = get_engine()
+    db = get_db()
 
     try:
-        with engine.connect() as conn:
+        with db.engine.begin() as conn:
             conn.execute(
                 text(f"""
                     INSERT INTO export_tracker (email, project_number, filters, datetimestamp)
@@ -826,7 +791,6 @@ def insert_export_tracking(
                 """),
                 {"emails": emails, "pn": project_number, "filters": filters_str}
             )
-            conn.commit()
     except Exception as e:
         st.error(f"Export tracking insert failed: {e}")
         return 0
