@@ -184,17 +184,23 @@ def open_action_popup(row_data):
                             pd.to_datetime(batch_df["Export Date"])
                             .dt.strftime("%d %b %Y")
                         )
-                        batch_df["Cumulative"] = batch_df["Emails Exported"].cumsum()
 
-                        left_col, right_col = st.columns([3, 2])
-                        with left_col:
-                            st.markdown("**Export Batches**")
-                            st.dataframe(
-                                batch_df, hide_index=True, use_container_width=True
-                            )
-                        with right_col:
+                        st.markdown("**Export Batches**")
+                        
+                        # Loop through every row/batch item to isolate them vertically
+                        for idx, row in batch_df.iterrows():
+                            # Clean stacked metric row representation
+                            b_col1, b_col2 = st.columns([1, 2])
+                            with b_col1:
+                                st.markdown(f"📅 **Export Date:** `{row['Export Date']}`")
+                            with b_col2:
+                                st.markdown(f"✉️ **Emails Exported:** `{row['Emails Exported']:,}`")
+                            
+                            # Places the SQL expander directly below this specific row 
                             with st.expander("View Base Target Parameters (SQL)", expanded=False):
                                 st.code(clean_sql, language="sql")
+                            
+                            st.write("---") # Visual break between multiple batches if they exist
                     else:
                         # No batch data yet — just show SQL
                         with st.expander("View Base Target Parameters (SQL)", expanded=False):
