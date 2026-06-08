@@ -214,13 +214,6 @@ def open_action_popup(row_data):
                 if i < len(base_sqls) - 1:
                     st.divider()
 
-
-    st.divider()
-    st.info("⚡ This popup is ready to process customized operational actions.")
-    
-    if st.button("Execute Action Query", type="primary", use_container_width=True):
-        st.success("Query placeholder executed successfully!")
-
 def show_operations_page():
     st.title("Operations Activity Logs")
     st.subheader("Open projects")
