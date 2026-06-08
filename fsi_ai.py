@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from sqlalchemy import text  # No longer need create_engine directly here
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
@@ -7,13 +8,13 @@ from langchain_core.runnables import RunnableSequence
 import time
 import re
 from collections import defaultdict
-from database import get_db
 
+# ─── NEW: IMPORT OUR CENTRALIZED DATABASE MANAGER ───
+from database import get_db
 
 # ----------------------------
 # LLM Configuration
 # ----------------------------
-
 
 @st.cache_resource
 def get_llm():
@@ -68,10 +69,6 @@ SEMANTIC TRANSLATION GLOSSARY (Mappings for human terms to database elements):
 EXPORT_KEYWORD_PATTERN = re.compile(r'\bexport(s|ing|ed)?\b', re.IGNORECASE)
 PROJECT_NUMBER_PATTERN = re.compile(r'\bfsi[a-z0-9]{4,}\b',  re.IGNORECASE)
 
-# Phrases that bypass the duplicate-exclusion filter.
-# NOTE: these do NOT delete existing export_tracker rows — they only
-# include already-exported emails in the current result and refresh
-# their datetimestamp. Add a DELETE helper if hard-reset is needed.
 EXPORT_OVERRIDE_PHRASES = [
     "disregard previous export",
     "ignore previous export",
@@ -87,8 +84,7 @@ EXPORT_OVERRIDE_PHRASES = [
 
 @st.cache_resource
 def get_schema_description() -> str:
-    """
-    Pulls live schema from the database and formats it for the LLM"""
+    """Pulls live schema from the database and formats it for the LLM"""
     db = get_db()
     db_awake = False
 
@@ -98,7 +94,6 @@ def get_schema_description() -> str:
     except Exception:
         db_awake = False
 
-    # Helper to construct a clean, structural context block from separate components
     def build_structured_payload(catalog_content: str) -> str:
         return f"""# SYSTEM DATA MANUAL & OPERATIONAL RULES
 
@@ -126,26 +121,24 @@ def get_schema_description() -> str:
 """
         
     if not db_awake:
-        st.warning(
-            "Database failed to wake up within timeout limit. Using static fallback.")
+        st.warning("Database failed to wake up within timeout limit. Using static fallback.")
         return build_structured_payload(STATIC_SCHEMA_FALLBACK.strip())
 
-    # ------------------------------------------------------------
-
     try:
+        # ⚡ Connected to shared connection instance
         with db.engine.connect() as conn:
             # 1. Get all tables in public schema
-            tables_result = conn.execute("""
+            tables_result = conn.execute(text("""
                 SELECT table_name 
                 FROM information_schema.tables 
                 WHERE table_schema = 'public' 
                   AND table_type = 'BASE TABLE'
                 ORDER BY table_name
-            """)
+            """))
             tables = [row[0] for row in tables_result]
 
             # 2. Get columns + constraints for each table
-            cols_result = conn.execute("""
+            cols_result = conn.execute(text("""
                 SELECT 
                     cols.table_name,
                     cols.column_name,
@@ -163,13 +156,12 @@ def get_schema_description() -> str:
                 WHERE cols.table_schema = 'public'
                   AND cols.table_name = ANY(:tables)
                 ORDER BY cols.table_name, cols.ordinal_position
-            """), {"tables": tables}
+            """), {"tables": tables})
 
             # 3. Group columns by table
             table_cols = defaultdict(list)
             for row in cols_result:
                 table_name, col_name, data_type, nullable, constraint = row
-                # Format nicely: email (varchar, PK), first_name (varchar)
                 col_str = f"{col_name} ({data_type}"
                 if constraint == 'PRIMARY KEY':
                     col_str += ", PK"
@@ -181,7 +173,7 @@ def get_schema_description() -> str:
                 table_cols[table_name].append(col_str)
 
             # 3. Get foreign key relationships
-            fk_result = conn.execute("""
+            fk_result = conn.execute(text("""
                 SELECT
                     kcu.table_name AS from_table,
                     kcu.column_name AS from_col,
@@ -198,7 +190,7 @@ def get_schema_description() -> str:
                   AND tc.table_schema = 'public'
                   AND kcu.table_name = ANY(:tables)
                 ORDER BY kcu.table_name
-            """), {"tables": tables}
+            """), {"tables": tables})
 
             relationships = defaultdict(list)
             for row in fk_result:
@@ -207,7 +199,7 @@ def get_schema_description() -> str:
                     f"{from_col} → {to_table}.{to_col}"
                 )
 
-            # 4. Assemble the raw catalog component using clean Markdown formatting
+            # 4. Assemble the raw catalog component
             schema_catalog_lines = []
             for table in tables:
                 cols = table_cols.get(table, [])
@@ -221,8 +213,6 @@ def get_schema_description() -> str:
             schema_catalog_lines.append("- Implicit matching pattern: For tables missing formal FK definitions, join using `r.email = target_table.email`.")
             
             raw_catalog = "\n".join(schema_catalog_lines)
-            
-            # 5. Return the fully compartmentalized handbook layout
             return build_structured_payload(raw_catalog)
 
     except Exception as e:
@@ -321,7 +311,6 @@ The PostgreSQL database contains the following key tables:
 CONTEXTUALIZE_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """
 You are an expert AI data assistant specializing in conversation context restoration for a database query system.
-
 Your job is to read the dialogue history and the user's latest question, then rephrase the latest question into a completely standalone, self-contained question.
 
 ### REPHRASING RULES:
@@ -333,14 +322,6 @@ Your job is to read the dialogue history and the user's latest question, then re
 You must structure your reply using XML tags to isolate your reasoning from your final answer:
 - Write your brief step-by-step history analysis inside <thinking>...</thinking> tags.
 - Write the final, completely standalone rephrased question inside <rewritten_question>...</rewritten_question> tags.
-
-Example Response Format:
-<thinking>
-The user is asking "how many are female?". History shows the previous question was "Show me a list of Consumers in the UK for project FSI12345". I need to bring forward the UK region and project constraints, while shifting the intent from a list to a count of females.
-</thinking>
-<rewritten_question>
-How many female consumers are there in the United Kingdom for project FSI12345?
-</rewritten_question.
 """),
     MessagesPlaceholder(variable_name="history"),
     ("human", "{question}")
@@ -404,7 +385,6 @@ The query returned this data:
 VALIDATION_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """
 You are a strict SQL code reviewer for a market research database.
-
 You must evaluate the generated SQL query against the user's original question using the operational guidelines, semantic mappings, and database rules provided below.
 
 ### RULES & SEMANTIC CONTEXT:
@@ -412,19 +392,16 @@ You must evaluate the generated SQL query against the user's original question u
 
 ### YOUR EVALUATION TASKS:
 Perform these two checks:
-1. Filters & Mappings: Does the SQL accurately apply EVERY filter and condition requested in the user's question? Verify that it correctly implements the rules in the SEMANTIC TRANSLATION GLOSSARY and BUSINESS CONTEXT above (e.g., dynamic age calculations from DOB, specific enum string matches, or ethnicity array expansions).
-2. Output Format: Does the SQL use the correct aggregation? If the user asks "how many", the SQL MUST use COUNT(). If they ask for a list, selection, or export, it MUST explicitly select email, first_name, last_name, AND EVERY SINGLE COLUMN used in the WHERE clause (e.g., gender, date_of_birth, country).
+1. Filters & Mappings: Does the SQL accurately apply EVERY filter and condition requested in the user's question? Verify that it correctly implements the rules in the SEMANTIC TRANSLATION GLOSSARY and BUSINESS CONTEXT above.
+2. Output Format: Does the SQL use the correct aggregation? If the user asks "how many", the SQL MUST use COUNT(). If they ask for a list, selection, or export, it MUST explicitly select email, first_name, last_name, AND EVERY SINGLE COLUMN used in the WHERE clause.
 
 ### OUTPUT FORMAT (STRICT):
-Your response must strictly follow one of these two formats. Do not include introductory text, conversational fluff, or repetitive justifications.
+Your response must strictly follow one of these two formats. Do not include introductory text or conversational fluff.
 
 FORMAT 1: If the SQL is 100% correct and compliant, output exactly this single word:
 VALID
 
 FORMAT 2: If the SQL fails any check, output a short, bulleted list of the specific errors found, then STOP generating immediately. 
-Example:
-* Missing dynamic AGE calculation filter.
-* Omitted r.gender from the SELECT clause despite filtering by it.
 """),
     ("human", """
 A user asked: "{question}"
@@ -455,7 +432,7 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
 EXPORT_POLICIES = """
 ### EXPORT & LISTING OVERRIDES
 [CRITICAL] The user has explicitly requested a data export, list, or detailed audience extraction. You MUST adhere to these overrides:
-1. Output Format: You MUST explicitly select `r.email`, `r.first_name`, `r.last_name`. IN ADDITION, you MUST explicitly include EVERY column you use in your WHERE clause inside your SELECT clause. (e.g., if you filter by `r.gender` and `a.country`, your select MUST be `SELECT r.email, r.first_name, r.last_name, r.gender, a.country`). NEVER use COUNT() for this query.
+1. Output Format: You MUST explicitly select `r.email`, `r.first_name`, `r.last_name`. IN ADDITION, you MUST explicitly include EVERY column you use in your WHERE clause inside your SELECT clause. NEVER use COUNT() for this query.
 2. Audience Capture Strategy (The "For Project" Rule): When a user asks to export an audience "for" a project (e.g., "export consumers for project FSI123"), they are building a NEW target list. You MUST NOT join the `projects` or `project_respondent` tables, and you MUST NOT filter by `project_number` in your SQL. ONLY join project tables if the user explicitly asks for people who "already participated", "completed", or "applied" to a specific project in the past.
 """
 
@@ -463,9 +440,7 @@ EXPORT_POLICIES = """
 # Core functions
 # ----------------------------
 
-
 def _parse_history(history) -> list:
-    """Safely coerces standard session elements into strictly typed LangChain Message objects."""
     if not history:
         return []
     parsed = []
@@ -489,32 +464,20 @@ def _parse_history(history) -> list:
 
 
 def extract_sql_from_cot(llm_response: str) -> str:
-    """
-    Extracts the SQL query from the LLM's response, ignoring the reasoning.
-    Looks specifically for markdown SQL blocks.
-    """
-    # Primary match: look for ```sql [query] ```
-    match = re.search(r"```sql\n(.*?)\n```", llm_response,
-                      re.DOTALL | re.IGNORECASE)
+    match = re.search(r"```sql\n(.*?)\n```", llm_response, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
 
-    # Fallback match: in case the LLM forgets the 'sql' tag and just uses ```
-    match_fallback = re.search(r"```(.*?)```", llm_response, re.DOTALL)
+    match_fallback = re.search(r"```( * ? )```", llm_response, re.DOTALL)
     if match_fallback:
         return match_fallback.group(1).strip()
 
-    # Failsafe: If no markdown is found, return the raw response
-    # (Though with our prompt, this should rarely happen)
     return llm_response.strip()
 
 
 def validate_sql_intent(question: str, sql: str, is_export: bool = False) -> str:
-    """Checks if the generated SQL dropped any user parameters."""
     llm = get_llm()
     chain = VALIDATION_PROMPT | llm
-    
-    # Bundle the semantic glossary and business rules context seamlessly
     rules_context = f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}"
 
     if is_export:
@@ -525,73 +488,58 @@ def validate_sql_intent(question: str, sql: str, is_export: bool = False) -> str
 
 
 def is_complex_query(question: str) -> bool:
-    """
-    Evaluates the user's question to determine if it requires Chain-of-Thought reasoning.
-    Zero-token heuristic based on word count and complexity keywords.
-    """
     q_lower = question.lower()
-
-    # Keywords that imply multi-table joins, date filtering, or complex aggregations
     complexity_indicators = [
         "between", "average", "ratio", "compare", "trend", "month", "year",
         "both", "multiple", "except", "without", "versus", "vs", "most",
         "least", "top", "bottom", "percentage", "group by"
     ]
-
-    # Route to CoT if the question is heavily constrained (long)
     if len(q_lower.split()) > 15:
         return True
-
-    # Route to CoT if it hits any complexity keywords
     if any(word in q_lower for word in complexity_indicators):
         return True
-
     return False
 
 
 def run_query(sql: str, max_retries: int = 5, delay: int = 3) -> pd.DataFrame | None:
-    """Runs the query with a retry loop to handle Neon's cold starts."""
+    """Runs the query using the persistent pre-ping connection pool."""
     db = get_db()
-    df = None  # Initialize df here
+    df = None
 
-    # st.status provides a spinner UI that we can update text for dynamically
     with st.status("Connecting to database...", expanded=True) as status:
         for attempt in range(max_retries):
             try:
+                status.update(label="Executing query...", state="running")
+                # ⚡ Grab a hot socket from the shared connection manager
                 with db.engine.connect() as conn:
-                    status.update(label="Executing query...", state="running")
-                    result = conn.execute(sql)
+                    result = conn.execute(text(sql))
                     df = pd.DataFrame(result.fetchall(), columns=result.keys())
-                    status.update(label="Query successful!",
-                                  state="complete", expanded=False)
-                    break  # Exit the retry loop gracefully instead of returning early
+                    status.update(label="Query successful!", state="complete", expanded=False)
+                    break 
 
             except Exception as e:
                 error_str = str(e).lower()
-                # Check if the error is likely due to the database being asleep
                 is_conn_error = any(keyword in error_str for keyword in [
                     "connection", "timeout", "closed", "ssl", "operationalerror"
                 ])
 
                 if is_conn_error and attempt < max_retries - 1:
                     status.update(
-                        label=f"Re-verifying bridge pool...(Attempt {attempt + 1} of {max_retries})",
+                        label=f"Re-verifying bridge pool... (Attempt {attempt + 1} of {max_retries})",
                         state="running"
                     )
-                    time.sleep(delay)  # Wait a few seconds before trying again
+                    time.sleep(delay)
                 else:
-                    # If it's a strict SQL syntax error or we ran out of retries, fail out
                     status.update(label="Query failed.", state="error")
                     st.session_state["last_sql_error"] = str(e)
                     st.error(f"SQL execution error: {e}")
-                    break  # Also break here on complete failure
+                    break
 
-    # Return df OUTSIDE the context manager so Streamlit fully closes the UI status
     return df
 
 
 def get_column_samples(sql: str) -> str:
-    """Looks at the SQL, finds the tables used, and fetches distinct values for text columns."""
+    """Fetches distinct string values for diagnostic retries using the shared manager."""
     db = get_db()
     samples = []
 
@@ -607,27 +555,26 @@ def get_column_samples(sql: str) -> str:
         with db.engine.connect() as conn:
             for table in set(tables):
                 try:
-                    col_result = conn.execute(f"""
+                    col_result = conn.execute(text(f"""
                         SELECT column_name 
                         FROM information_schema.columns 
                         WHERE table_name = '{table}' 
                         AND data_type IN ('text', 'character varying', 'USER-DEFINED')
                         LIMIT 8
-                    """)
+                    """))
                     columns = [row[0] for row in col_result]
 
                     for col in columns:
                         try:
-                            val_result = conn.execute(f"""
+                            val_result = conn.execute(text(f"""
                                 SELECT DISTINCT {col} 
                                 FROM {table} 
                                 WHERE {col} IS NOT NULL 
                                 LIMIT 5
-                            """)
+                            """))
                             values = [str(row[0]) for row in val_result]
                             if values:
-                                samples.append(
-                                    f"{table}.{col}: {', '.join(values)}")
+                                samples.append(f"{table}.{col}: {', '.join(values)}")
                         except:
                             pass
                 except:
@@ -639,14 +586,10 @@ def get_column_samples(sql: str) -> str:
 
 
 def get_real_columns_for_sql(sql: str) -> str:
-    """
-    Given a SQL string, extracts all table names referenced and returns
-    their real column lists from information_schema. Used for UndefinedColumn retries.
-    """
+    """Extracts table names from failed SQL and streams columns back from info_schema."""
     db = get_db()
     lines = []
 
-    # Extract table names from FROM and JOIN clauses
     words = sql.lower().split()
     tables = []
     for i, word in enumerate(words):
@@ -662,17 +605,16 @@ def get_real_columns_for_sql(sql: str) -> str:
         with db.engine.connect() as conn:
             for table in set(tables):
                 try:
-                    result = conn.execute("""
+                    result = conn.execute(text("""
                         SELECT column_name, data_type
                         FROM information_schema.columns
                         WHERE table_schema = 'public'
                           AND table_name = :table
                         ORDER BY ordinal_position
-                    """), {"table": table}
+                    """), {"table": table})
                     cols = [f"{row[0]} ({row[1]})" for row in result]
                     if cols:
-                        lines.append(
-                            f"Table '{table}' has these columns: {', '.join(cols)}")
+                        lines.append(f"Table '{table}' has these columns: {', '.join(cols)}")
                 except Exception:
                     pass
     except Exception:
@@ -684,12 +626,7 @@ def get_real_columns_for_sql(sql: str) -> str:
 # Execution Pipeline
 # ----------------------------
 
-
 def detect_export_request(question: str) -> tuple[bool, str | None, bool]:
-    """
-    Checks whether the question is a tracked export request.
-    Returns: (is_export, project_number, is_override)
-    """
     has_export = bool(EXPORT_KEYWORD_PATTERN.search(question))
     project_match = PROJECT_NUMBER_PATTERN.search(question)
     project_number = project_match.group(0).lower() if project_match else None
@@ -698,24 +635,13 @@ def detect_export_request(question: str) -> tuple[bool, str | None, bool]:
     is_override = False
     if is_export:
         q_lower = question.lower()
-        is_override = any(
-            phrase in q_lower for phrase in EXPORT_OVERRIDE_PHRASES)
+        is_override = any(phrase in q_lower for phrase in EXPORT_OVERRIDE_PHRASES)
 
     return is_export, project_number, is_override
 
 
 def add_export_exclusion_to_sql(sql: str, project_number: str) -> str:
-    """
-    Wraps the entire AI-generated query inside a outer subquery block to safely 
-    apply the export suppression rule. This prevents breaking complex queries 
-    like UNIONs or CTEs (WITH clauses) where internal string injection is fragile.
-    """
-    # Clean up any trailing semicolons from the original query
     cleaned_sql = sql.rstrip(';').rstrip()
-    
-    # Wrap the query and filter the resulting dataset against the tracking table.
-    # Note: This assumes the inner query exposes an 'email' column, which matches
-    # your prompt rules enforcing 'always provide r.email for lists'.
     wrapped_sql = (
         f"SELECT * FROM (\n"
         f"    {cleaned_sql}\n"
@@ -725,16 +651,10 @@ def add_export_exclusion_to_sql(sql: str, project_number: str) -> str:
         f"    WHERE project_number = '{project_number.lower()}'\n"
         f")"
     )
-    
     return wrapped_sql
 
 
 def extract_base_sql_for_storage(sql: str) -> str:
-    """
-    Strips the export exclusion wrapper if it exists, returning the pure 
-    AI-generated SQL query so it can be safely re-run for operational metrics.
-    """
-    # Looks for the injection wrapper and extracts only the inner AI query
     match = re.search(
         r"SELECT \* FROM \(\s*(.*?)\s*\)\s*AS final_output\s*WHERE final_output\.email NOT IN", 
         sql, 
@@ -742,8 +662,6 @@ def extract_base_sql_for_storage(sql: str) -> str:
     )
     if match:
         return match.group(1).strip()
-        
-    # If it's not wrapped, return the query as-is
     return sql.strip()
 
 
@@ -751,6 +669,7 @@ def get_already_exported_count(project_number: str) -> int:
     """Total emails already tracked in export_tracker for a given project."""
     db = get_db()
     try:
+        # ⚡ Switched to clean single-line scalar checkout
         result = db.execute("SELECT COUNT(*) FROM export_tracker WHERE project_number = :pn", {"pn": project_number})
         return result.scalar() or 0
     except Exception as e:
@@ -758,19 +677,8 @@ def get_already_exported_count(project_number: str) -> int:
         return 0
 
 
-def insert_export_tracking(
-    emails: list[str],
-    project_number: str,
-    filters_str: str,
-    is_override: bool = False,
-) -> int:
-    """
-    Bulk-inserts emails into export_tracker.
-    - Normal  : ON CONFLICT DO NOTHING. SQL already excluded duplicates, so
-                all rows in `emails` should be genuinely new.
-    - Override: ON CONFLICT DO UPDATE to refresh datetimestamp and filters.
-    Returns the number of emails processed.
-    """
+def insert_export_tracking(emails: list[str], project_number: str, filters_str: str, is_override: bool = False) -> int:
+    """Bulk-inserts emails using a self-committing block transaction context."""
     if not emails:
         return 0
 
@@ -778,17 +686,18 @@ def insert_export_tracking(
         "DO UPDATE SET filters = EXCLUDED.filters, datetimestamp = EXCLUDED.datetimestamp"
         if is_override else "DO NOTHING"
     )
-
+   
     db = get_db()
 
     try:
+        # ⚡ USING db.engine.begin() FOR AUTO-COMMIT SAFE TRANSACTION HOOK
         with db.engine.begin() as conn:
             conn.execute(
-                f"""
-                INSERT INTO export_tracker (email, project_number, filters, datetimestamp)
-                SELECT unnest(CAST(:emails AS varchar[])), :pn, :filters, NOW() AT TIME ZONE 'UTC'
-                ON CONFLICT (email, project_number) {conflict}
-                """,
+                text(f"""
+                    INSERT INTO export_tracker (email, project_number, filters, datetimestamp)
+                    SELECT unnest(CAST(:emails AS varchar[])), :pn, :filters, NOW() AT TIME ZONE 'UTC'
+                    ON CONFLICT (email, project_number) {conflict}
+                """),
                 {"emails": emails, "pn": project_number, "filters": filters_str}
             )
     except Exception as e:
@@ -798,26 +707,13 @@ def insert_export_tracking(
     return len(emails)
 
 
-def _handle_export_tracking(
-    sql: str,
-    df,
-    project_number: str | None,
-    is_export: bool,
-    is_override: bool,
-) -> None:
-    """
-    Called at every return point in generate_sql_with_retry.
-    Inserts export rows and displays a summary banner when conditions are met.
-    Silently skips when the query is not an export or returned no emails.
-    """
+def _handle_export_tracking(sql: str, df, project_number: str | None, is_export: bool, is_override: bool) -> None:
     if not is_export or not project_number or df is None or df.empty:
         return
 
-    # Tolerate any column that contains 'email' (e.g. 'email', 'recipient_email')
     email_col = next((c for c in df.columns if 'email' in c.lower()), None)
     if email_col is None:
-        st.warning(
-            "⚠️ Export detected but result has no email column — tracking skipped.")
+        st.warning("⚠️ Export detected but result has no email column — tracking skipped.")
         return
 
     emails = df[email_col].dropna().unique().tolist()
@@ -834,15 +730,11 @@ def _handle_export_tracking(
         msg += f" _{skipped} skipped (already tracked)._"
     st.success(msg)
 
+
 def contextualize_user_question(question: str, history: list) -> str:
-    """
-    Rewrites ambiguous user questions into standalone queries using a 
-    Chain-of-Thought scratchpad to protect filters from dropping out.
-    """
     if not history:
         return question
 
-    # Safely convert raw list structures into LangChain Message objects
     parsed_history = _parse_history(history)
     llm = get_llm()
     chain = CONTEXTUALIZE_PROMPT | llm
@@ -853,12 +745,10 @@ def contextualize_user_question(question: str, history: list) -> str:
             "question": question
         }).content.strip()
         
-        # Isolate the final rephrased question from the XML tag
         match = re.search(r"<rewritten_question>(.*?)</rewritten_question>", response, re.DOTALL)
         if match:
             return match.group(1).strip()
             
-        # Fallback: If the model missed the tags, strip thinking blocks out
         clean_text = re.sub(r"<thinking>.*?</thinking>", "", response, flags=re.DOTALL).strip()
         if clean_text:
             return clean_text
@@ -868,9 +758,8 @@ def contextualize_user_question(question: str, history: list) -> str:
         
     return question
 
-def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | None, pd.DataFrame | None]:
-    """Generates SQL, validates intent, runs it, and handles DB retries."""
 
+def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | None, pd.DataFrame | None]:
     raw_original_question = question
     question = contextualize_user_question(question, history)
     
@@ -878,7 +767,6 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
     is_export, project_number, is_override = False, None, False
 
     with st.expander("🔍 Query Process", expanded=True):
-        # Step 0: Context Condensation Layer (Streamlined to display the pre-processed output)
         st.markdown("**Step 0: Synchronizing Context ...**")
         if parsed_history:
             if question != raw_original_question:
@@ -890,7 +778,6 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
             
         is_export, project_number, is_override = detect_export_request(question)
 
-        # Step 1
         st.markdown("**Step 1: Generating SQL...**")
         sql = generate_sql(question, history=history, is_export=is_export)
 
@@ -901,26 +788,21 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
         valid_sql_starts = ("select", "with", "(", "--", "/*")
         if not sql.lower().startswith(valid_sql_starts):
             st.info("No database query required for this message.")
-            # We return the conversational text as 'sql', but df as None.
             return sql, None
 
         st.code(sql, language="sql")
 
-        # Step 2: Validate Intent
         st.markdown("**Step 2: Validating Query Intent...**")
         validation_result = validate_sql_intent(question, sql, is_export=is_export)
 
         if validation_result != "VALID":
-            st.warning(
-                f"⚠️ Code Reviewer flagged an issue: {validation_result}")
-            st.markdown(
-                "**Step 2.5: Rewriting SQL to include missing parameters...**")
+            st.warning(f"⚠️ Code Reviewer flagged an issue: {validation_result}")
+            st.markdown("**Step 2.5: Rewriting SQL to include missing parameters...**")
 
             rewrite_rules = f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}"
             if is_export:
                 rewrite_rules += f"\n\n{EXPORT_POLICIES}"
 
-            # Run the targeted rewrite
             llm = get_llm()
             chain = REWRITE_PROMPT | llm
             sql = chain.invoke({
@@ -935,11 +817,9 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
         else:
             st.info("✅ Query passed intent validation.")
 
-        # --- Export Tracking: modify SQL before execution ---
         if is_export and not is_override:
             already_count = get_already_exported_count(project_number)
-            st.markdown(
-                "**Export Tracking: Excluding previously exported emails...**")
+            st.markdown("**Export Tracking: Excluding previously exported emails...**")
             if already_count > 0:
                 st.info(
                     f"ℹ️ {already_count} previously exported email(s) for "
@@ -949,31 +829,22 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
             st.markdown("**Modified SQL (export exclusion applied):**")
             st.code(sql, language="sql")
         elif is_export and is_override:
-            st.info(
-                f"🔄 Export override active — all matching emails will be "
-                f"included for `{project_number}`."
-            )
+            st.info(f"🔄 Export override active — all matching emails will be included for `{project_number}`.")
 
-        # Step 3
         st.markdown("**Step 3: Running query...**")
         df = run_query(sql)
         sql_error = st.session_state.pop("last_sql_error", None)
 
         if df is not None and not df.empty:
             st.success(f"Query returned {len(df)} row(s). No retry needed.")
-            _handle_export_tracking(
-                sql, df, project_number, is_export, is_override)
+            _handle_export_tracking(sql, df, project_number, is_export, is_override)
             return sql, df
 
-        # Step 4 — retry
         if (df is not None and df.empty) or (df is None and sql_error):
-
             if sql_error and "undefinedcolumn" in sql_error.lower():
-                st.warning(
-                    "⚠️ Query used a column that doesn't exist. Fetching real column names...")
+                st.warning("⚠️ Query used a column that doesn't exist. Fetching real column names...")
                 st.markdown("**Step 4: Injecting real column inventory...**")
 
-                # Extract the offending table from the error or from the SQL
                 real_columns = get_real_columns_for_sql(sql)
 
                 if real_columns:
@@ -1019,23 +890,19 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                         st.error(f"Retry also failed: {sql_error}")
                     else:
                         st.info("Retry ran but returned 0 results.")
-                    _handle_export_tracking(
-                        sql, df, project_number, is_export, is_override)
+                    _handle_export_tracking(sql, df, project_number, is_export, is_override)
                     return sql, df
 
-            # --- Branch B: Zero results — inject real enum values ---
             else:
                 if sql_error:
                     st.warning(f"⚠️ Query failed: {sql_error}")
                 else:
-                    st.warning(
-                        "⚠️ Query returned 0 results. Checking actual stored values...")
+                    st.warning("⚠️ Query returned 0 results. Checking actual stored values...")
 
                 st.markdown("**Step 3: Fetching column value samples...**")
                 samples = get_column_samples(sql)
 
                 if samples:
-                    # Don't dump raw samples to UI — just confirm we got them
                     st.info("✅ Retrieved column value samples for retry.")
                     st.markdown("**Step 4: Retrying with correct values...**")
 
@@ -1084,16 +951,11 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
 
 
 def generate_sql(question: str, history: list = None, is_export: bool = False) -> str | None:
-    """Generates SQL using CoT reasoning and structured chat history."""
     if history is None:
         history = []
 
     llm = get_llm()
-
-    # 1. Evaluate complexity
     requires_cot = is_complex_query(question)
-
-    # 2. Route to the correct prompt
     prompt_template = COMPLEX_SQL_PROMPT if requires_cot else SIMPLE_SQL_PROMPT
     
     system_prompt = get_schema_description()
@@ -1109,7 +971,6 @@ def generate_sql(question: str, history: list = None, is_export: bool = False) -
             "question": question
         }).content
 
-        # Strip out the reasoning, leaving only the executable SQL
         clean_sql = extract_sql_from_cot(raw_response)
         return clean_sql
 
@@ -1121,14 +982,12 @@ def generate_sql(question: str, history: list = None, is_export: bool = False) -
 def generate_response(question: str, df: pd.DataFrame) -> str | None:
     llm = get_llm()
     chain = RESPONSE_PROMPT | llm
-    data_str = df.to_string(
-        index=False) if df is not None else "No data returned."
+    data_str = df.to_string(index=False) if df is not None else "No data returned."
     return chain.invoke({"question": question, "data": data_str}).content
 
 # ----------------------------
 # Interface Compatibility Stubs
 # ----------------------------
-
 
 def generate_questions_cached():
     return [
@@ -1159,7 +1018,7 @@ def run_sql_cached(sql: str):
 
 
 def should_generate_chart_cached(question, sql, df):
-    return False  # charts dropped for prototype
+    return False 
 
 
 def generate_plotly_code_cached(question, sql, df):
@@ -1184,6 +1043,5 @@ def generate_summary_cached(question, df):
     elif len(df) <= 5:
         return generate_response(question, df.head(5))
     else:
-        # For large result sets, just confirm what was returned
         cols = ", ".join(df.columns.tolist())
         return f"Query returned {len(df)} records with columns: {cols}."
