@@ -182,7 +182,7 @@ if st.session_state["page"] == "FSI AI":
                             st.session_state["staged_edit_prompt"] = edited_prompt
                             st.rerun()
 
-    elif msg["role"] == "assistant":
+        elif msg["role"] == "assistant":
             with st.chat_message("assistant", avatar=avatar_url):
                 if msg.get("error"):
                     st.error(msg["error"])
