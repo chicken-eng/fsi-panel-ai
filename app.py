@@ -16,6 +16,13 @@ from fsi_ai import (
 from operations import show_operations_page
 from database import get_db
 
+# 💡 Safeguard state structures at the absolute top of app.py
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []
+
+if "staged_edit_prompt" not in st.session_state:
+    st.session_state["staged_edit_prompt"] = None 
+
 db = get_db()
 try:
     db.ensure_awake()
@@ -144,10 +151,6 @@ if st.session_state["page"] == "FSI AI":
     def set_question(question):
         st.session_state["my_question"] = question
 
-    # 1. Initialize the chat history list if it doesn't exist yet
-    if "messages" not in st.session_state:
-        st.session_state["messages"] = []
-
     # 2. Display the "Suggested Questions" button ONLY if the chat is empty
     if len(st.session_state["messages"]) == 0:
         assistant_message_suggested = st.chat_message("assistant", avatar=avatar_url)
@@ -157,29 +160,46 @@ if st.session_state["page"] == "FSI AI":
                 time.sleep(0.05)
                 st.button(question, on_click=set_question, args=(question,))
 
-    # 3. Loop through and draw all past messages
-    for msg in st.session_state["messages"]:
+    # 💡 CHANGE 1 & 2: Loop through past messages, adding stable keys and edit tools
+    for idx, msg in enumerate(st.session_state["messages"]):
         if msg["role"] == "user":
-            st.chat_message("user").write(msg["content"])
-        elif msg["role"] == "assistant":
+            with st.chat_message("user"):
+                # Layout split: 94% for your text query, 6% for the edit icon button
+                col_text, col_edit = st.columns([0.94, 0.06])
+                col_text.write(msg["content"])
+                
+                with col_edit:
+                    with st.popover("✏️", help="Edit this prompt and rerun from here"):
+                        edited_prompt = st.text_area(
+                            "Modify prompt:", 
+                            value=msg["content"], 
+                            key=f"edit_input_{idx}"
+                        )
+                        if st.button("Save & Rerun", key=f"run_edit_{idx}"):
+                            # Slice history up to this exact message, dropping everything after it
+                            st.session_state["messages"] = st.session_state["messages"][:idx]
+                            # Stage the new modified string to run on the next reload
+                            st.session_state["staged_edit_prompt"] = edited_prompt
+                            st.rerun()
+
+    elif msg["role"] == "assistant":
             with st.chat_message("assistant", avatar=avatar_url):
                 if msg.get("error"):
                     st.error(msg["error"])
                 else:
-                    # Defaulting global flags to True/False explicitly now that toggles are removed
                     if msg.get("sql"):
                         st.code(msg["sql"], language="sql", line_numbers=True)
                         
                     if msg.get("df") is not None:
                         df = msg["df"]
-                        # Provide the download button for the FULL dataframe
                         csv = convert_df_to_csv(df)
+                        # 💡 Fix: Using clean 'idx' based key strings instead of dynamic UUIDs prevents cache dumping
                         st.download_button(
                              label=f"📥 Download Full Data ({len(df)} rows)",
                              data=csv,
                              file_name='fsi_data_export.csv',
                              mime='text/csv',
-                             key=f"download_hist_{uuid.uuid4()}" 
+                             key=f"download_hist_{idx}" 
                         )
                         if len(df) > 10:
                             st.caption(f"Showing first 10 of {len(df)} rows below:")
@@ -187,24 +207,26 @@ if st.session_state["page"] == "FSI AI":
                         else:
                             st.dataframe(df)
                             
-                    if msg.get("plotly_code"):
-                        st.code(msg["plotly_code"], language="python", line_numbers=True)
-                    if msg.get("fig"):
-                        st.plotly_chart(msg["fig"])
-                    if msg.get("summary"):
-                        st.text(msg["summary"])
+                        if msg.get("plotly_code"):
+                            st.code(msg["plotly_code"], language="python", line_numbers=True)
+                        if msg.get("fig"):
+                            st.plotly_chart(msg["fig"])
+                        if msg.get("summary"):
+                            st.text(msg["summary"])
 
-    # 4. Always show the input box
+    # Always show the input box at the bottom
     user_input = st.chat_input("Ask me a question about your data")
 
-    # Determine the current question (from chat input OR from clicking a suggestion)
+    # Evaluate where the active query text originates from
     my_question = None
-    if user_input:
+    if st.session_state.get("staged_edit_prompt"):
+        my_question = st.session_state["staged_edit_prompt"]
+        st.session_state["staged_edit_prompt"] = None  # Immediately empty the target buffer
+    elif user_input:
         my_question = user_input
     elif st.session_state.get("my_question"):
         my_question = st.session_state["my_question"]
-        # Clear it so it doesn't trigger again on the next UI rerun
-        st.session_state["my_question"] = None 
+        st.session_state["my_question"] = None
 
     # 5. Process the NEW question
     if my_question:
@@ -263,6 +285,7 @@ if st.session_state["page"] == "FSI AI":
                 st.error(turn_data["error"])
                 
             st.session_state["messages"].append(turn_data)
+            st.rerun()
 
 elif st.session_state["page"] == "Operations":
     # Call the functional module code directly to draw the dashboard layout
