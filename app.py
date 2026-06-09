@@ -16,12 +16,15 @@ from fsi_ai import (
 from operations import show_operations_page
 from database import get_db
 
-# 💡 Safeguard state structures at the absolute top of app.py
+# 💡 Initialize conversation states securely at startup
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
 
 if "staged_edit_prompt" not in st.session_state:
     st.session_state["staged_edit_prompt"] = None 
+
+if "edit_index" not in st.session_state:
+    st.session_state["edit_index"] = None
 
 db = get_db()
 try:
@@ -32,20 +35,17 @@ except Exception as e:
 def build_history_messages(messages: list, max_turns: int = 3) -> list:
     """
     Builds conversation context from the last N turns.
-    Skips history if the current question appears to be a topic shift
-    (i.e. doesn't reference pronouns or connective words).
+    Skips history if the current question appears to be a topic shift.
     """
     if not messages:
         return []
 
-    # Connective words that signal the user is continuing a prior thread
     continuation_signals = [
         "and ", "also ", "what about", "how about", "same for", 
         "now ", "but ", "instead", "those", "them", "their",
         "that", "these", "the same", "similar", "above"
     ]
     
-    # Get the last user message to check if it's a continuation
     last_user_msg = ""
     for msg in reversed(messages):
         if msg["role"] == "user":
@@ -53,8 +53,6 @@ def build_history_messages(messages: list, max_turns: int = 3) -> list:
             break
     
     is_continuation = any(signal in last_user_msg for signal in continuation_signals)
-    
-    # If no continuation signal, this looks like a fresh topic — skip history
     if not is_continuation:
         return []
         
@@ -72,16 +70,10 @@ def build_history_messages(messages: list, max_turns: int = 3) -> list:
     if not pairs:
         return []
     
-    # Build structured LangChain message objects
     langchain_messages = []
     for q, sql in reversed(pairs):
-        # 1. Add the human's past question
         langchain_messages.append(HumanMessage(content=q))
-        
-        # 2. Add the AI's past SQL response
         if sql:
-            # We wrap the SQL in markdown tags so it identically matches 
-            # the format the Llama 3 model is instructed to output.
             langchain_messages.append(AIMessage(content=f"```sql\n{sql}\n```"))
             
     return langchain_messages
@@ -97,25 +89,18 @@ st.set_page_config(layout="wide")
 # ------------------------------------------------------------
 # PERMANENT NARROW SIDEBAR NAVIGATION
 # ------------------------------------------------------------
-
-# Inject custom CSS to narrow down the sidebar width permanently
 st.markdown(
     """
     <style>
-        /* Forces the sidebar navigation container width to stay narrow */
         [data-testid="stSidebar"] {
             min-width: 240px !important;
             max-width: 240px !important;
         }
-        
-        /* Overrides the overly bright green selection color for primary buttons */
         button[data-testid="stBaseButton-primary"] {
-            background-color: #1E3A8A !important;  /* Elegant dark blue/navy */
+            background-color: #1E3A8A !important;  
             border-color: #1E3A8A !important;
             color: #ffffff !important;
         }
-        
-        /* Optional: Change hover styling for primary buttons */
         button[data-testid="stBaseButton-primary"]:hover {
             background-color: #172554 !important;
             border-color: #172554 !important;
@@ -125,13 +110,11 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Initialize navigation page state
 if "page" not in st.session_state:
     st.session_state["page"] = "FSI AI"
 
 st.sidebar.title("Navigation")
 
-# Navigation buttons
 if st.sidebar.button("🤖 FSI AI", use_container_width=True, type="primary" if st.session_state["page"] == "FSI AI" else "secondary"):
     st.session_state["page"] = "FSI AI"
     st.rerun()
@@ -151,7 +134,7 @@ if st.session_state["page"] == "FSI AI":
     def set_question(question):
         st.session_state["my_question"] = question
 
-    # 2. Display the "Suggested Questions" button ONLY if the chat is empty
+    # Display the "Suggested Questions" button ONLY if the chat is empty
     if len(st.session_state["messages"]) == 0:
         assistant_message_suggested = st.chat_message("assistant", avatar=avatar_url)
         if assistant_message_suggested.button("Click to show suggested questions"):
@@ -160,28 +143,41 @@ if st.session_state["page"] == "FSI AI":
                 time.sleep(0.05)
                 st.button(question, on_click=set_question, args=(question,))
 
-    # 💡 CHANGE 1 & 2: Loop through past messages, adding stable keys and edit tools
+    # Loop through and draw all past messages
     for idx, msg in enumerate(st.session_state["messages"]):
         if msg["role"] == "user":
             with st.chat_message("user"):
-                # Layout split: 94% for your text query, 6% for the edit icon button
-                col_text, col_edit = st.columns([0.94, 0.06])
+                col_text, col_edit = st.columns([0.96, 0.04])
                 col_text.write(msg["content"])
                 
-                with col_edit:
-                    with st.popover("✏️", help="Edit this prompt and rerun from here"):
+                # Simple clean edit trigger icon button
+                if col_edit.button("✏️", key=f"edit_btn_{idx}", help="Edit this question"):
+                    st.session_state["edit_index"] = idx
+                    st.rerun()
+            
+            # 💡 CHANGE 1: THE BIGGER, CENTERED INLINE EDIT WINDOW
+            # Appears beautifully framed directly underneath the targeted user question block
+            if st.session_state["edit_index"] == idx:
+                edit_layout_col1, edit_layout_col2, edit_layout_col3 = st.columns([0.05, 0.90, 0.05])
+                with edit_layout_col2:
+                    with st.container(border=True):
+                        st.markdown("### ✏️ Edit Your Question")
                         edited_prompt = st.text_area(
-                            "Modify prompt:", 
+                            "Modify prompt text below:", 
                             value=msg["content"], 
+                            height=160,  # Generous height expansion
                             key=f"edit_input_{idx}"
                         )
-                        if st.button("Save & Rerun", key=f"run_edit_{idx}"):
-                            # Slice history up to this exact message, dropping everything after it
-                            st.session_state["messages"] = st.session_state["messages"][:idx]
-                            # Stage the new modified string to run on the next reload
-                            st.session_state["staged_edit_prompt"] = edited_prompt
+                        act_col1, act_col2 = st.columns([0.15, 0.85])
+                        if act_col1.button("Cancel", key=f"cancel_edit_{idx}", use_container_width=True):
+                            st.session_state["edit_index"] = None
                             st.rerun()
-
+                        if act_col2.button("Apply Changes & Rerun From Here", key=f"run_edit_{idx}", type="primary", use_container_width=True):
+                            st.session_state["messages"] = st.session_state["messages"][:idx]
+                            st.session_state["staged_edit_prompt"] = edited_prompt
+                            st.session_state["edit_index"] = None
+                            st.rerun()
+                            
         elif msg["role"] == "assistant":
             with st.chat_message("assistant", avatar=avatar_url):
                 if msg.get("error"):
@@ -193,7 +189,6 @@ if st.session_state["page"] == "FSI AI":
                     if msg.get("df") is not None:
                         df = msg["df"]
                         csv = convert_df_to_csv(df)
-                        # 💡 Fix: Using clean 'idx' based key strings instead of dynamic UUIDs prevents cache dumping
                         st.download_button(
                              label=f"📥 Download Full Data ({len(df)} rows)",
                              data=csv,
@@ -207,36 +202,34 @@ if st.session_state["page"] == "FSI AI":
                         else:
                             st.dataframe(df)
                             
-                        if msg.get("plotly_code"):
-                            st.code(msg["plotly_code"], language="python", line_numbers=True)
-                        if msg.get("fig"):
-                            st.plotly_chart(msg["fig"])
-                        if msg.get("summary"):
-                            st.text(msg["summary"])
+                    # 💡 CHANGE 2: FIXED INDENTATION 
+                    # These steps now render accurately and independently outside of the DataFrame block
+                    if msg.get("plotly_code"):
+                        st.code(msg["plotly_code"], language="python", line_numbers=True)
+                    if msg.get("fig"):
+                        st.plotly_chart(msg["fig"])
+                    if msg.get("summary"):
+                        st.text(msg["summary"])
 
     # Always show the input box at the bottom
     user_input = st.chat_input("Ask me a question about your data")
 
-    # Evaluate where the active query text originates from
     my_question = None
     if st.session_state.get("staged_edit_prompt"):
         my_question = st.session_state["staged_edit_prompt"]
-        st.session_state["staged_edit_prompt"] = None  # Immediately empty the target buffer
+        st.session_state["staged_edit_prompt"] = None  
     elif user_input:
         my_question = user_input
     elif st.session_state.get("my_question"):
         my_question = st.session_state["my_question"]
-        st.session_state["my_question"] = None
+        st.session_state["my_question"] = None 
 
-    # 5. Process the NEW question
+    # Process the active question payload
     if my_question:
-        # Append user question to history
         st.session_state["messages"].append({"role": "user", "content": my_question})
         st.chat_message("user").write(my_question)
         
-        # Process assistant response inside its chat bubble
         with st.chat_message("assistant", avatar=avatar_url):
-            # We'll build a dictionary to save this turn's data to history
             turn_data = {"role": "assistant"}
 
             history_msgs = build_history_messages(st.session_state["messages"][:-1])
@@ -248,15 +241,13 @@ if st.session_state["page"] == "FSI AI":
                 
                 if df is not None:
                     turn_data["df"] = df
-
-                    # Custom Download Button for the Active Turn
                     csv = convert_df_to_csv(df)
                     st.download_button(
                          label=f"📥 Download Full Data ({len(df)} rows)",
                          data=csv,
                          file_name='fsi_data_export.csv',
                          mime='text/csv',
-                         key=f"download_active_{uuid.uuid4()}" 
+                         key=f"download_active_{len(st.session_state['messages'])}" 
                     )
                     
                     if len(df) > 10:
@@ -285,8 +276,7 @@ if st.session_state["page"] == "FSI AI":
                 st.error(turn_data["error"])
                 
             st.session_state["messages"].append(turn_data)
-            st.rerun()
+            st.rerun()  
 
 elif st.session_state["page"] == "Operations":
-    # Call the functional module code directly to draw the dashboard layout
     show_operations_page()
