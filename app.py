@@ -172,7 +172,7 @@ if st.session_state["page"] == "FSI AI":
                         if act_col1.button("Cancel", key=f"cancel_edit_{idx}", use_container_width=True):
                             st.session_state["edit_index"] = None
                             st.rerun()
-                        if act_col2.button("Apply Changes & Rerun From Here", key=f"run_edit_{idx}", type="primary", use_container_width=True):
+                        if act_col2.button("Submit", key=f"run_edit_{idx}", type="primary", use_container_width=True):
                             st.session_state["messages"] = st.session_state["messages"][:idx]
                             st.session_state["staged_edit_prompt"] = edited_prompt
                             st.session_state["edit_index"] = None
