@@ -776,37 +776,37 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
     is_export, project_number, is_override = False, None, False
 
     with st.expander("🔍 Query Process", expanded=True):
-        log_ui("**Step 0: Synchronizing Context ...**")
+        log_ui("markdown", "**Step 0: Synchronizing Context ...**")
         if parsed_history:
             if question != raw_original_question:
-                log_ui(f"🔄 Rephrased contextually to: *\"{question}\"*")
+                log_ui("info", f"🔄 Rephrased contextually to: *\"{question}\"*")
             else:
-                log_ui("📊 Context analyzed; query contains explicit attributes.")
+                log_ui("info", "📊 Context analyzed; query contains explicit attributes.")
         else:
-            log_ui("🆕 Fresh chat thread started.")
+            log_ui("info", "🆕 Fresh chat thread started.")
             
         is_export, project_number, is_override = detect_export_request(question)
 
-        log_ui("**Step 1: Generating SQL...**")
+        log_ui("markdown", "**Step 1: Generating SQL...**")
         sql = generate_sql(question, history=history, is_export=is_export)
 
         if not sql:
-            log_ui("Could not generate a valid SQL query.")
+            log_ui("error", "Could not generate a valid SQL query.")
             return None, None, query_process_logs
 
         valid_sql_starts = ("select", "with", "(", "--", "/*")
         if not sql.lower().startswith(valid_sql_starts):
-            log_ui("No database query required for this message.")
+            log_ui("info", "No database query required for this message.")
             return sql, None, query_process_logs
 
-        log_ui(sql, language="sql")
+        log_ui("code", sql, language="sql")
 
-        log_ui("**Step 2: Validating Query Intent...**")
+        log_ui("markdown", "**Step 2: Validating Query Intent...**")
         validation_result = validate_sql_intent(question, sql, is_export=is_export)
 
         if validation_result != "VALID":
-            log_ui(f"⚠️ Code Reviewer flagged an issue: {validation_result}")
-            log_ui("**Step 2.5: Rewriting SQL to include missing parameters...**")
+            log_ui("warning", f"⚠️ Code Reviewer flagged an issue: {validation_result}")
+            log_ui("markdown", "**Step 2.5: Rewriting SQL to include missing parameters...**")
 
             rewrite_rules = f"{SEMANTIC_GLOSSARY}\n\n{BUSINESS_CONTEXT}"
             if is_export:
@@ -822,37 +822,37 @@ def generate_sql_with_retry(question: str, history: list = None) -> tuple[str | 
                 "missing_logic": validation_result
             }).content.strip()
 
-            log_ui(sql, language="sql")
+            log_ui("code", sql, language="sql")
         else:
-            log_ui("✅ Query passed intent validation.")
+            log_ui("info", "✅ Query passed intent validation.")
 
         if is_export and not is_override:
             already_count = get_already_exported_count(project_number)
-            log_ui("**Export Tracking: Excluding previously exported emails...**")
+            log_ui("markdown", "**Export Tracking: Excluding previously exported emails...**")
             if already_count > 0:
-                log_ui(
+                log_ui("info",
                     f"ℹ️ {already_count} previously exported email(s) for "
                     f"`{project_number}` will be excluded from this run."
                 )
             sql = add_export_exclusion_to_sql(sql, project_number)
-            log_ui("**Modified SQL (export exclusion applied):**")
-            log_ui(sql, language="sql")
+            log_ui("markdown", "**Modified SQL (export exclusion applied):**")
+            log_ui("code", sql, language="sql")
         elif is_export and is_override:
-            log_ui(f"🔄 Export override active — all matching emails will be included for `{project_number}`.")
+            log_ui("info", f"🔄 Export override active — all matching emails will be included for `{project_number}`.")
 
-        log_ui("**Step 3: Running query...**")
+        log_ui("markdown", "**Step 3: Running query...**")
         df = run_query(sql)
         sql_error = st.session_state.pop("last_sql_error", None)
 
         if df is not None and not df.empty:
-            log_ui(f"Query returned {len(df)} row(s). No retry needed.")
+            log_ui("success", f"Query returned {len(df)} row(s). No retry needed.")
             _handle_export_tracking(sql, df, project_number, is_export, is_override)
             return sql, df, query_process_logs
 
         if (df is not None and df.empty) or (df is None and sql_error):
             if sql_error and "undefinedcolumn" in sql_error.lower():
-                log_ui("⚠️ Query used a column that doesn't exist. Fetching real column names...")
-                log_ui("**Step 4: Injecting real column inventory...**")
+                log_ui("warning", "⚠️ Query used a column that doesn't exist. Fetching real column names...")
+                log_ui("markdown", "**Step 4: Injecting real column inventory...**")
 
                 real_columns = get_real_columns_for_sql(sql)
 
@@ -888,32 +888,32 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                         "error": sql_error
                     }).content.strip()
 
-                    log_ui("**Step 4: Retried SQL:**")
-                    log_ui(sql, language="sql")
+                    log_ui("markdown", "**Step 4: Retried SQL:**")
+                    log_ui("code", sql, language="sql")
 
                     df = run_query(sql)
                     sql_error = st.session_state.pop("last_sql_error", None)
                     if df is not None and not df.empty:
-                        log_ui(f"✅ Retry successful — {len(df)} row(s).")
+                        log_ui("success", f"✅ Retry successful — {len(df)} row(s).")
                     elif sql_error:
-                        log_ui(f"Retry also failed: {sql_error}")
+                        log_ui("error", f"Retry also failed: {sql_error}")
                     else:
-                        log_ui("Retry ran but returned 0 results.")
+                        log_ui("info", "Retry ran but returned 0 results.")
                     _handle_export_tracking(sql, df, project_number, is_export, is_override)
                     return sql, df, query_process_logs
 
             else:
                 if sql_error:
-                    log_ui(f"⚠️ Query failed: {sql_error}")
+                    log_ui("warning", f"⚠️ Query failed: {sql_error}")
                 else:
-                    log_ui("⚠️ Query returned 0 results. Checking actual stored values...")
+                    log_ui("warning", "⚠️ Query returned 0 results. Checking actual stored values...")
 
-                log_ui("**Step 3: Fetching column value samples...**")
+                log_ui("markdown", "**Step 3: Fetching column value samples...**")
                 samples = get_column_samples(sql)
 
                 if samples:
-                    log_ui("✅ Retrieved column value samples for retry.")
-                    log_ui("**Step 4: Retrying with correct values...**")
+                    log_ui("info", "✅ Retrieved column value samples for retry.")
+                    log_ui("markdown", "**Step 4: Retrying with correct values...**")
 
                     llm = get_llm()
                     retry_prompt = ChatPromptTemplate.from_messages([
@@ -941,19 +941,19 @@ Return ONLY the SQL query with no explanation, no markdown, no code fences.
                         "samples": samples
                     }).content.strip()
 
-                    log_ui("**Step 4: Retried SQL:**")
-                    log_ui(sql, language="sql")
+                    log_ui("markdown", "**Step 4: Retried SQL:**")
+                    log_ui("code", sql, language="sql")
 
                     df = run_query(sql)
                     sql_error = st.session_state.pop("last_sql_error", None)
                     if df is not None and not df.empty:
-                        log_ui(f"✅ Retry successful — {len(df)} row(s).")
+                        log_ui("success", f"✅ Retry successful — {len(df)} row(s).")
                     elif sql_error:
-                        log_ui(f"Retry also failed: {sql_error}")
+                        log_ui("error", f"Retry also failed: {sql_error}")
                     else:
-                        log_ui("Retry ran but returned 0 results.")
+                        log_ui("info", "Retry ran but returned 0 results.")
                 else:
-                    log_ui("Could not fetch column samples for retry.")
+                    log_ui("warning", "Could not fetch column samples for retry.")
 
     _handle_export_tracking(sql, df, project_number, is_export, is_override)
     return sql, df, query_process_logs
