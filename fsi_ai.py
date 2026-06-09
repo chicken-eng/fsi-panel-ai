@@ -372,7 +372,7 @@ Rules:
 - Provide a brief text summary of the findings rather than generating a Markdown table or returning the raw rows.
 - Omit commentary, caveats, or explanations unless the data is empty.
 - If no data is returned, output exactly: "No results were found for that question."
-- When providing a list, ensure each email is unique. If an email has multiple associated values in a single column, merge those values and ensure they are separated by a ';'.
+- Each email address must appear only once in the output. Where an email has multiple associated values in the respondent_type, projects, respondent_hcp_level_of_expertises, conditions, or hcp_job_title columns, consolidate those values into a single cell for that email, using a semicolon (;) as the delimiter.
 """),
     ("human", """
 A user asked: "{question}"
