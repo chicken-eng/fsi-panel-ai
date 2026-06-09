@@ -16,7 +16,7 @@ from fsi_ai import (
 from operations import show_operations_page
 from database import get_db
 
-# 💡 Initialize conversation states securely at startup
+# Initialize conversation states securely at startup
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
 
@@ -150,22 +150,22 @@ if st.session_state["page"] == "FSI AI":
                 col_text, col_edit = st.columns([0.96, 0.04])
                 col_text.write(msg["content"])
                 
-                # Simple clean edit trigger icon button
+                # Clean edit trigger icon button
                 if col_edit.button("✏️", key=f"edit_btn_{idx}", help="Edit this question"):
                     st.session_state["edit_index"] = idx
                     st.rerun()
             
-            # 💡 CHANGE 1: THE BIGGER, CENTERED INLINE EDIT WINDOW
-            # Appears beautifully framed directly underneath the targeted user question block
+            # 💡 ADJUSTMENT 1: CENTERED & ROOMIER EDIT CONTAINER
+            # Pulls closer to the middle of the workspace while giving generous typing margins
             if st.session_state["edit_index"] == idx:
-                edit_layout_col1, edit_layout_col2, edit_layout_col3 = st.columns([0.05, 0.90, 0.05])
+                edit_layout_col1, edit_layout_col2, edit_layout_col3 = st.columns([0.12, 0.76, 0.12])
                 with edit_layout_col2:
                     with st.container(border=True):
                         st.markdown("### ✏️ Edit Your Question")
                         edited_prompt = st.text_area(
                             "Modify prompt text below:", 
                             value=msg["content"], 
-                            height=160,  # Generous height expansion
+                            height=180,  
                             key=f"edit_input_{idx}"
                         )
                         act_col1, act_col2 = st.columns([0.15, 0.85])
@@ -202,8 +202,6 @@ if st.session_state["page"] == "FSI AI":
                         else:
                             st.dataframe(df)
                             
-                    # 💡 CHANGE 2: FIXED INDENTATION 
-                    # These steps now render accurately and independently outside of the DataFrame block
                     if msg.get("plotly_code"):
                         st.code(msg["plotly_code"], language="python", line_numbers=True)
                     if msg.get("fig"):
@@ -276,7 +274,8 @@ if st.session_state["page"] == "FSI AI":
                 st.error(turn_data["error"])
                 
             st.session_state["messages"].append(turn_data)
-            st.rerun()  
+            # 💡 ADJUSTMENT 2: Removed trailing st.rerun() here so that the live logs, 
+            # query process expander steps, and sub-alerts persist completely after the execution completes.
 
 elif st.session_state["page"] == "Operations":
     show_operations_page()
