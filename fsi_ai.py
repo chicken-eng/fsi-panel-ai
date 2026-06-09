@@ -19,7 +19,7 @@ from database import get_db
 @st.cache_resource
 def get_llm():
     return ChatGroq(
-        model="qwen-2.5-coder-32b",
+        model="openai/gpt-oss-120b",
         groq_api_key=st.secrets["GROQ_API_KEY"],
         temperature=0
     )
