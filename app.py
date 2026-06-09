@@ -183,6 +183,13 @@ if st.session_state["page"] == "FSI AI":
                 if msg.get("error"):
                     st.error(msg["error"])
                 else:
+                    if msg.get("query_logs"):
+                        with st.expander("🔍 Archived Query Process", expanded=False): # Kept clean/collapsed by default
+                            for log in msg["query_logs"]:
+                                func_name = log["type"]
+                                if hasattr(st, func_name):
+                                    getattr(st, func_name)(*log["args"], **log["kwargs"])
+                    
                     if msg.get("sql"):
                         st.code(msg["sql"], language="sql", line_numbers=True)
                         
@@ -202,10 +209,6 @@ if st.session_state["page"] == "FSI AI":
                         else:
                             st.dataframe(df)
                             
-                    if msg.get("plotly_code"):
-                        st.code(msg["plotly_code"], language="python", line_numbers=True)
-                    if msg.get("fig"):
-                        st.plotly_chart(msg["fig"])
                     if msg.get("summary"):
                         st.text(msg["summary"])
 
@@ -235,7 +238,7 @@ if st.session_state["page"] == "FSI AI":
             
             if sql and is_sql_valid_cached(sql=sql):
                 turn_data["sql"] = sql
-                st.code(sql, language="sql", line_numbers=True)
+                turn_data["query_logs"] = logs
                 
                 if df is not None:
                     turn_data["df"] = df
@@ -253,17 +256,6 @@ if st.session_state["page"] == "FSI AI":
                         st.dataframe(df.head(10))
                     else:
                         st.dataframe(df)
-                            
-                    if should_generate_chart_cached(question=my_question, sql=sql, df=df):
-                        code = generate_plotly_code_cached(question=my_question, sql=sql, df=df)
-                        turn_data["plotly_code"] = code
-                        if code:
-                            fig = generate_plot_cached(code=code, df=df)
-                            if fig:
-                                turn_data["fig"] = fig
-                                st.plotly_chart(fig)
-                            else:
-                                st.error("I couldn't generate a chart")
                                 
                     summary = generate_summary_cached(question=my_question, df=df)
                     if summary:
