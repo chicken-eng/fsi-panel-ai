@@ -234,7 +234,7 @@ if st.session_state["page"] == "FSI AI":
             turn_data = {"role": "assistant"}
 
             history_msgs = build_history_messages(st.session_state["messages"][:-1])
-            sql, df = generate_sql_cached(question=my_question, history=history_msgs)
+            sql, df, logs = generate_sql_cached(question=my_question, history=history_msgs)
             
             if sql and is_sql_valid_cached(sql=sql):
                 turn_data["sql"] = sql
