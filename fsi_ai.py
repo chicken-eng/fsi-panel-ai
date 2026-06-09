@@ -328,7 +328,7 @@ You must structure your reply using XML tags to isolate your reasoning from your
 ])
 
 SIMPLE_SQL_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """
+    ("human", """
 {schema}
 
 You are an expert PostgreSQL database engineer for a market research firm. 
@@ -337,11 +337,11 @@ Return ONLY the final SQL query enclosed strictly within ```sql and ``` markdown
 Do not explain the SQL or provide any step-by-step reasoning.
 """),
     MessagesPlaceholder(variable_name="history"),
-    ("human", "{question}")
+    ("human", "Current Question: {question}")
 ])
 
 COMPLEX_SQL_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """
+    ("human", """
 {schema}
 
 You are an expert PostgreSQL database engineer for a market research firm. 
@@ -359,7 +359,7 @@ Before writing the query, you MUST think through the problem step-by-step. Use t
 After your reasoning, provide the final, highly optimized PostgreSQL query enclosed strictly within ```sql and ``` markdown tags. Do not explain the SQL after writing it.
 """),
     MessagesPlaceholder(variable_name="history"),
-    ("human", "{question}")
+    ("human", "Current Question: {question}")
 ])
 
 RESPONSE_PROMPT = ChatPromptTemplate.from_messages([
