@@ -311,3 +311,5 @@ def show_operations_page():
             
     except Exception as e:
         st.error(f"Failed to load operational project metrics: {e}")
+
+    st.subheader("New respondents per project")
