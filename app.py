@@ -271,3 +271,4 @@ if st.session_state["page"] == "FSI AI":
 
 elif st.session_state["page"] == "Operations":
     show_operations_page()
+    show_operations_page2()
