@@ -321,7 +321,7 @@ def show_operations_page():
                    FROM respondent_type_specification
                    GROUP BY email
                    HAVING MIN(created_date) >= DATE '2026-01-01'
-                ),
+                )
             
                 SELECT
                     COALESCE(p.project_number::text, 'TOTAL') AS project_number,
