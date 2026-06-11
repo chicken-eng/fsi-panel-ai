@@ -343,9 +343,9 @@ def show_operations_page():
     """
 
     try:
-        df = db.get_df(query2)
+        df2 = db.get_df(query2)
 
-        if not df.empty:
+        if not df2.empty:
             st.dataframe(
                 df2,
                 use_container_width=True,
