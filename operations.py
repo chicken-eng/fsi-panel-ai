@@ -285,7 +285,8 @@ def show_operations_page():
     
     db = get_db()
     query = "SELECT project_number, project_name, project_type, topic, sharepoint_link, created_date FROM projects WHERE project_state = 'Open' order by project_type;"
-    
+
+    st.subheader("New respondents per project")
     try:
         df = db.get_df(query)
         
