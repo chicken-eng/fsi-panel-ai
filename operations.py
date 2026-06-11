@@ -354,5 +354,5 @@ def show_operations_page():
         else:
             st.info("No data available for this metric.")
 
-     except Exception as e:
-         st.error(f"Failed to load secondary metrics: {e}")
+    except Exception as e:
+        st.error(f"Failed to load secondary metrics: {e}")
