@@ -286,7 +286,6 @@ def show_operations_page():
     db = get_db()
     query = "SELECT project_number, project_name, project_type, topic, sharepoint_link, created_date FROM projects WHERE project_state = 'Open' order by project_type;"
 
-    st.subheader("New respondents per project")
     try:
         df = db.get_df(query)
         
@@ -306,6 +305,8 @@ def show_operations_page():
                 row_data = df.iloc[selected_row_idx].to_dict()
                 
                 open_action_popup(row_data)
+
+        st.subheader("New respondents per project")
                 
         else:
             st.info("There are currently no projects marked as 'Open'.")
