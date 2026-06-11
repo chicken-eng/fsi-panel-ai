@@ -305,11 +305,11 @@ def show_operations_page():
                 row_data = df.iloc[selected_row_idx].to_dict()
                 
                 open_action_popup(row_data)
-
-             st.subheader("New respondents per project")
                 
         else:
             st.info("There are currently no projects marked as 'Open'.")
+
+    st.subheader("New respondents per project")
             
     except Exception as e:
         st.error(f"Failed to load operational project metrics: {e}")
