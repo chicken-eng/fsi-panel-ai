@@ -311,37 +311,3 @@ def show_operations_page():
             
     except Exception as e:
         st.error(f"Failed to load operational project metrics: {e}")
-
-def show_operations_page2():
-    st.subheader("New respondents per project")
-    
-    db = get_db()
-    query = "SELECT project_number, project_name, project_type, topic, sharepoint_link, created_date FROM projects WHERE project_state = 'Open' order by project_type;"
-
-    try:
-        df = db.get_df(query)
-        
-        if not df.empty:
-            st.caption("💡 Highlight any row below to trigger the operations action popup.")
-            
-            selection = st.dataframe(
-                df,
-                use_container_width=True,
-                hide_index=True,
-                on_select="rerun",
-                selection_mode="single-row" 
-            )
-            
-            if selection and selection.get("selection", {}).get("rows"):
-                selected_row_idx = selection["selection"]["rows"][0]
-                row_data = df.iloc[selected_row_idx].to_dict()
-                
-                open_action_popup(row_data)
-                
-        else:
-            st.info("There are currently no projects marked as 'Open'.")
-            
-    except Exception as e:
-        st.error(f"Failed to load operational project metrics: {e}")
-
-
