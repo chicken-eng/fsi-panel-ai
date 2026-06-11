@@ -306,7 +306,7 @@ def show_operations_page():
                 
                 open_action_popup(row_data)
 
-        st.subheader("New respondents per project")
+             st.subheader("New respondents per project")
                 
         else:
             st.info("There are currently no projects marked as 'Open'.")
