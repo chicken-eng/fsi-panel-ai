@@ -139,14 +139,14 @@ def calculate_project_metrics_cached(project_number):
             # ── Batches: per-day export counts for this fingerprint ────────────
             query_batches = """
                 SELECT
-                    DATE(datetimestamp)                    AS export_date,
+                    datetimestamp                          AS export_timestamp,
                     COUNT(DISTINCT TRIM(LOWER(email)))     AS exported
                 FROM export_tracker
                 WHERE TRIM(LOWER(project_number)) = :pn
                   AND filter_fingerprint = :fingerprint
                   AND email IS NOT NULL
-                GROUP BY DATE(datetimestamp)
-                ORDER BY DATE(datetimestamp)
+                GROUP BY datetimestamp
+                ORDER BY datetimestamp
             """
 
             # ── Drift detection ───────────────────────────────────────────────
@@ -265,7 +265,7 @@ def open_action_popup(row_data):
             batch_df = data["batch_df"]
             if not batch_df.empty:
                 batch_df = batch_df.rename(columns={
-                    "export_date": "Export Date",
+                    "export_timestamp": "Export Date",
                     "exported":    "Emails Exported"
                 })
                 batch_df["Export Date"] = (
