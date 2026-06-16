@@ -6,19 +6,35 @@ from sqlalchemy import text
 from database import get_db
 
 def get_all_project_sqls(project_number):
-    """Fetches ALL distinct saved AI queries for this project from the export tracker."""
-    db = get_db()
-    query = """
-        SELECT filters 
-        FROM export_tracker 
-        WHERE project_number = :pn AND filters IS NOT NULL 
-        GROUP BY filters 
-        ORDER BY MIN(datetimestamp) ASC
     """
+    Fetches distinct semantic fingerprint groups for this project, ordered by first
+    appearance. Each entry is {fingerprint, first_sql} where first_sql is the earliest
+    stored SQL for that fingerprint (used for count queries and display).
+    """
+    db = get_db()
+    pn_clean = str(project_number).lower()
+
+    query = text("""
+        WITH first_occurrence AS (
+            SELECT DISTINCT ON (filter_fingerprint)
+                filter_fingerprint,
+                filters        AS first_sql,
+                datetimestamp  AS first_seen
+            FROM export_tracker
+            WHERE TRIM(LOWER(project_number)) = :pn
+              AND filters IS NOT NULL
+              AND filter_fingerprint IS NOT NULL
+            ORDER BY filter_fingerprint, datetimestamp ASC
+        )
+        SELECT filter_fingerprint, first_sql
+        FROM first_occurrence
+        ORDER BY first_seen ASC
+    """)
+
     try:
-        # Wrap query string in text() for SQLAlchemy 2.0 conformance
-        result = db.execute(query, {"pn": str(project_number).lower()})
-        return [row[0] for row in result]
+        with db.engine.connect() as conn:
+            rows = conn.execute(query, {"pn": pn_clean}).fetchall()
+        return [{"fingerprint": row[0], "first_sql": row[1]} for row in rows]
     except Exception as e:
         st.warning(f"Could not retrieve base SQLs: {e}")
         return []
@@ -59,73 +75,85 @@ def extract_update_date_condition(sql: str) -> str | None:
 
 
 @st.cache_data(ttl=300, show_spinner="Calculating live sample metrics concurrently...")
+@st.cache_data(ttl=300, show_spinner="Calculating live sample metrics concurrently...")
 def calculate_project_metrics_cached(project_number):
     """
-    Performance Core: Extracts, prepares, and runs all target data counters 
-    simultaneously across independent connection channels via a ThreadPoolExecutor.
-    Caches outputs for 5 minutes to prevent heavy interactive UI re-query penalties.
+    Concurrently computes Whole, Launched, Available, Drifted, and Batch metrics
+    for each semantic audience fingerprint group registered for this project.
+
+    Key semantics:
+      - Whole    : total respondents currently matching the filter, no exclusions.
+      - Launched : respondents exported specifically under this TAD's fingerprint.
+      - Available: respondents in this TAD's pool NOT yet exported for this project
+                   under ANY fingerprint — correctly reflects cross-TAD overlap.
+      - Drifted  : exported respondents who no longer satisfy date-based conditions.
     """
     db = get_db()
-    base_sqls = get_all_project_sqls(project_number)
-    
-    if not base_sqls:
+    tad_groups = get_all_project_sqls(project_number)
+
+    if not tad_groups:
         return []
 
     pn_clean = str(project_number).lower().strip()
-    compiled_tasks = []
-    
-    # Open thread pool context manager to manage concurrent database lookups
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        
-        for i, raw_sql in enumerate(base_sqls):
-            clean_sql = clean_sql_for_counts(raw_sql)
-            
-            # Setup isolation representations 
-            if i == 0:
-                display_sql = clean_sql
-                query_whole = f"SELECT COUNT(DISTINCT TRIM(LOWER(email))) FROM ({clean_sql}) AS sub_whole"
-            else:
-                display_sql = (
-                    f"SELECT * FROM (\n"
-                    f"    {clean_sql}\n"
-                    f") AS final_output\n"
-                    f"WHERE final_output.email NOT IN (\n"
-                    f"    SELECT email \n"
-                    f"    FROM export_tracker\n"
-                    f"    WHERE project_number = '{pn_clean}'\n"
-                    f"    AND filters != '<< THIS CURRENT DEMOGRAPHIC QUERY >>'\n"
-                    f");"
-                )
-                query_whole = f"""
-                    SELECT COUNT(DISTINCT TRIM(LOWER(email))) 
-                    FROM ({clean_sql}) AS sub_whole
-                    WHERE TRIM(LOWER(email)) NOT IN (
-                        SELECT TRIM(LOWER(email)) 
-                        FROM export_tracker 
-                        WHERE TRIM(LOWER(project_number)) = :pn 
-                        AND filters != :raw_sql
-                    )
-                """
-            
-            query_launched = """
-                SELECT COUNT(DISTINCT TRIM(LOWER(email))) 
-                FROM export_tracker 
-                WHERE TRIM(LOWER(project_number)) = :pn AND filters = :raw_sql AND email IS NOT NULL
-            """
 
-            query_batches = """
-                SELECT
-                    DATE(datetimestamp)                      AS export_date,
-                    COUNT(DISTINCT TRIM(LOWER(email)))       AS exported
+    # Worker definitions — closed over `db`, defined once outside the loop
+    def fetch_scalar_worker(sql_str, params):
+        with db.engine.connect() as conn:
+            return conn.execute(text(sql_str), params).scalar() or 0
+
+    def fetch_dataframe_worker(sql_str, params):
+        with db.engine.connect() as conn:
+            res = conn.execute(text(sql_str), params)
+            return pd.DataFrame(res.fetchall(), columns=res.keys())
+
+    compiled_tasks = []
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        for group in tad_groups:
+            fingerprint = group["fingerprint"]
+            first_sql   = group["first_sql"]
+            clean_sql   = clean_sql_for_counts(first_sql)
+
+            # ── Whole: full pool matching these filters, no exclusions ─────────
+            query_whole = (
+                f"SELECT COUNT(DISTINCT TRIM(LOWER(email))) "
+                f"FROM ({clean_sql}) AS sub_whole"
+            )
+
+            # ── Launched: exported specifically under this fingerprint ─────────
+            query_launched = """
+                SELECT COUNT(DISTINCT TRIM(LOWER(email)))
                 FROM export_tracker
                 WHERE TRIM(LOWER(project_number)) = :pn
-                AND filters = :raw_sql
-                AND email IS NOT NULL
+                  AND filter_fingerprint = :fingerprint
+                  AND email IS NOT NULL
+            """
+
+            # ── Available: in pool AND not exported for project under any TAD ──
+            query_available = (
+                f"SELECT COUNT(DISTINCT TRIM(LOWER(email))) "
+                f"FROM ({clean_sql}) AS sub_avail "
+                f"WHERE TRIM(LOWER(email)) NOT IN ("
+                f"    SELECT TRIM(LOWER(email)) FROM export_tracker "
+                f"    WHERE TRIM(LOWER(project_number)) = :pn AND email IS NOT NULL"
+                f")"
+            )
+
+            # ── Batches: per-day export counts for this fingerprint ────────────
+            query_batches = """
+                SELECT
+                    DATE(datetimestamp)                    AS export_date,
+                    COUNT(DISTINCT TRIM(LOWER(email)))     AS exported
+                FROM export_tracker
+                WHERE TRIM(LOWER(project_number)) = :pn
+                  AND filter_fingerprint = :fingerprint
+                  AND email IS NOT NULL
                 GROUP BY DATE(datetimestamp)
                 ORDER BY DATE(datetimestamp)
             """
-            
-            age_condition = extract_dob_age_condition(clean_sql)
+
+            # ── Drift detection ───────────────────────────────────────────────
+            age_condition    = extract_dob_age_condition(clean_sql)
             update_condition = extract_update_date_condition(clean_sql)
             drift_parts = []
             if age_condition:
@@ -133,7 +161,7 @@ def calculate_project_metrics_cached(project_number):
             if update_condition:
                 drift_parts.append(f"NOT ({update_condition})")
             has_date_drift = bool(drift_parts)
-            
+
             query_drifted = None
             if has_date_drift:
                 drift_filter = " OR ".join(drift_parts)
@@ -143,63 +171,51 @@ def calculate_project_metrics_cached(project_number):
                     JOIN respondent r
                         ON TRIM(LOWER(r.email)) = TRIM(LOWER(et.email))
                     WHERE TRIM(LOWER(et.project_number)) = :pn
-                    AND et.filters = :raw_sql
-                    AND et.email IS NOT NULL
-                    AND ({drift_filter})
+                      AND et.filter_fingerprint = :fingerprint
+                      AND et.email IS NOT NULL
+                      AND ({drift_filter})
                 """
 
-            # Define localized thread workers targeting specific SQLAlchemy return shapes
-            def fetch_scalar_worker(sql_str, params):
-                with db.engine.connect() as conn:
-                    return conn.execute(text(sql_str), params).scalar() or 0
+            fp_params = {"pn": pn_clean, "fingerprint": fingerprint}
 
-            def fetch_dataframe_worker(sql_str, params):
-                with db.engine.connect() as conn:
-                    res = conn.execute(text(sql_str), params)
-                    return pd.DataFrame(res.fetchall(), columns=res.keys())
+            future_whole     = executor.submit(fetch_scalar_worker,    query_whole,     {})
+            future_launched  = executor.submit(fetch_scalar_worker,    query_launched,  fp_params)
+            future_available = executor.submit(fetch_scalar_worker,    query_available, {"pn": pn_clean})
+            future_batches   = executor.submit(fetch_dataframe_worker, query_batches,   fp_params)
+            future_drifted   = (
+                executor.submit(fetch_scalar_worker, query_drifted, fp_params)
+                if query_drifted else None
+            )
 
-            # Fire queries concurrently to the persistent connection pool
-            future_whole = executor.submit(fetch_scalar_worker, query_whole, {"pn": pn_clean, "raw_sql": raw_sql})
-            future_launched = executor.submit(fetch_scalar_worker, query_launched, {"pn": pn_clean, "raw_sql": raw_sql})
-            future_batches = executor.submit(fetch_dataframe_worker, query_batches, {"pn": pn_clean, "raw_sql": raw_sql})
-            
-            future_drifted = None
-            if query_drifted:
-                future_drifted = executor.submit(fetch_scalar_worker, query_drifted, {"pn": pn_clean, "raw_sql": raw_sql})
-                
             compiled_tasks.append({
-                "raw_sql": raw_sql,
-                "display_sql": display_sql,
+                "display_sql":    clean_sql,
                 "has_date_drift": has_date_drift,
                 "futures": {
-                    "whole": future_whole,
-                    "launched": future_launched,
-                    "batches": future_batches,
-                    "drifted": future_drifted
-                }
+                    "whole":     future_whole,
+                    "launched":  future_launched,
+                    "available": future_available,
+                    "batches":   future_batches,
+                    "drifted":   future_drifted,
+                },
             })
 
-    # Safely gather threaded payloads as they finalize execution
     processed_audiences = []
     for task in compiled_tasks:
-        whole_count = task["futures"]["whole"].result()
-        launched_count = task["futures"]["launched"].result()
-        batch_df = task["futures"]["batches"].result()
-        drifted_count = task["futures"]["drifted"].result() if task["futures"]["drifted"] else 0
-        
-        raw_available = whole_count - launched_count
-        available_count = max(0, raw_available)
-        
+        whole_count     = task["futures"]["whole"].result()
+        launched_count  = task["futures"]["launched"].result()
+        available_count = task["futures"]["available"].result()
+        batch_df        = task["futures"]["batches"].result()
+        drifted_count   = task["futures"]["drifted"].result() if task["futures"]["drifted"] else 0
+
         processed_audiences.append({
-            "raw_sql": task["raw_sql"],
-            "display_sql": task["display_sql"],
+            "display_sql":    task["display_sql"],
             "has_date_drift": task["has_date_drift"],
-            "whole_count": whole_count,
+            "whole_count":    whole_count,
             "launched_count": launched_count,
-            "drifted_count": drifted_count,
-            "batch_df": batch_df,
-            "raw_available": raw_available,
-            "available_count": available_count
+            "available_count": available_count,
+            "drifted_count":  drifted_count,
+            "batch_df":       batch_df,
+            "pool_shrunk":    whole_count < launched_count,
         })
 
     return processed_audiences
@@ -264,11 +280,8 @@ def open_action_popup(row_data):
                 for idx, row in batch_df.iterrows():
                     st.markdown(f"📅 **Export Date:** `{row['Export Date']}`   |   ✉️ **Emails Exported:** `{row['Emails Exported']:,}`")
                     
-                    with st.expander("View Base Target Parameters (SQL)", expanded=False):
-                        st.code(data["display_sql"], language="sql")
-            else:
-                with st.expander("View Base Target Parameters (SQL)", expanded=False):
-                    st.code(data["display_sql"], language="sql")
+            with st.expander("View Base Target Parameters (SQL)", expanded=False):
+                st.code(data["display_sql"], language="sql")
 
             if i < len(audiences) - 1:
                 st.divider()
