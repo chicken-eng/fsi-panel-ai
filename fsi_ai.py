@@ -7,6 +7,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import RunnableSequence
 import time
 import re
+import hashlib
 from collections import defaultdict
 
 # ─── NEW: IMPORT OUR CENTRALIZED DATABASE MANAGER ───
@@ -664,6 +665,35 @@ def extract_base_sql_for_storage(sql: str) -> str:
         return match.group(1).strip()
     return sql.strip()
 
+def compute_filter_fingerprint(sql: str) -> str:
+    """
+    Produces a stable 16-char fingerprint from the semantic WHERE conditions of a
+    filter SQL string. Two queries that impose identical demographic requirements but
+    differ in SELECT columns, ORDER BY, JOIN style, or whitespace produce the same
+    fingerprint and are treated as the same Target Audience Definition.
+    """
+    base_sql = extract_base_sql_for_storage(sql)
+
+    # Drop ORDER BY and everything trailing it — irrelevant to semantics
+    base_no_order = re.sub(
+        r'\bORDER\s+BY\b.*$', '', base_sql, flags=re.DOTALL | re.IGNORECASE
+    ).strip()
+
+    # Extract just the WHERE clause
+    where_match = re.search(r'\bWHERE\b(.+)$', base_no_order, re.DOTALL | re.IGNORECASE)
+    where_clause = where_match.group(1).strip() if where_match else base_no_order
+
+    # Remove the universal blacklist exclusion — present in every query, adds no signal
+    where_clause = re.sub(
+        r'\s*AND\s+r\.email\s+NOT\s+IN\s*\(\s*SELECT\s+email\s+FROM\s+unsubscribe_blacklist\s*\)',
+        '', where_clause, flags=re.DOTALL | re.IGNORECASE
+    ).strip()
+
+    # Normalize: collapse whitespace → single space, lowercase, strip table alias prefixes
+    normalized = re.sub(r'\s+', ' ', where_clause).lower().strip()
+    normalized = re.sub(r'\b(?:r|a|rts|rt)\b\.', '', normalized)
+
+    return hashlib.sha256(normalized.encode()).hexdigest()[:16]
 
 def get_already_exported_count(project_number: str) -> int:
     """Total emails already tracked in export_tracker for a given project."""
@@ -677,28 +707,46 @@ def get_already_exported_count(project_number: str) -> int:
         return 0
 
 
-def insert_export_tracking(emails: list[str], project_number: str, filters_str: str, is_override: bool = False) -> int:
+def insert_export_tracking(
+    emails: list[str],
+    project_number: str,
+    filters_str: str,
+    fingerprint: str,
+    is_override: bool = False,
+) -> int:
     """Bulk-inserts emails using a self-committing block transaction context."""
     if not emails:
         return 0
 
     conflict = (
-        "DO UPDATE SET filters = EXCLUDED.filters, datetimestamp = EXCLUDED.datetimestamp"
+        "DO UPDATE SET filters = EXCLUDED.filters, "
+        "filter_fingerprint = EXCLUDED.filter_fingerprint, "
+        "datetimestamp = EXCLUDED.datetimestamp"
         if is_override else "DO NOTHING"
     )
-   
+
     db = get_db()
 
     try:
-        # ⚡ USING db.engine.begin() FOR AUTO-COMMIT SAFE TRANSACTION HOOK
         with db.engine.begin() as conn:
             conn.execute(
                 text(f"""
-                    INSERT INTO export_tracker (email, project_number, filters, datetimestamp)
-                    SELECT unnest(CAST(:emails AS varchar[])), :pn, :filters, NOW() AT TIME ZONE 'UTC'
+                    INSERT INTO export_tracker
+                        (email, project_number, filters, filter_fingerprint, datetimestamp)
+                    SELECT
+                        unnest(CAST(:emails AS varchar[])),
+                        :pn,
+                        :filters,
+                        :fingerprint,
+                        NOW() AT TIME ZONE 'UTC'
                     ON CONFLICT (email, project_number) {conflict}
                 """),
-                {"emails": emails, "pn": project_number, "filters": filters_str}
+                {
+                    "emails": emails,
+                    "pn": project_number,
+                    "filters": filters_str,
+                    "fingerprint": fingerprint,
+                },
             )
     except Exception as e:
         st.error(f"Export tracking insert failed: {e}")
@@ -718,9 +766,10 @@ def _handle_export_tracking(sql: str, df, project_number: str | None, is_export:
 
     emails = df[email_col].dropna().unique().tolist()
     filters_str = extract_base_sql_for_storage(sql)
+    fingerprint = compute_filter_fingerprint(sql) 
 
     with st.spinner(f"Tracking {len(emails)} records for project {project_number.upper()}..."):
-        written = insert_export_tracking(emails, project_number, filters_str, is_override)
+        written = insert_export_tracking(emails, project_number, filters_str, fingerprint, is_override)
 
     action = "exported / refreshed" if is_override else "newly exported"
     skipped = len(emails) - written if not is_override else 0
