@@ -258,7 +258,7 @@ def open_action_popup(row_data):
             m2.metric("Launched Sample", f"{data['launched_count']:,}")
             m3.metric("Available Sample", f"{data['available_count']:,}")
 
-            if data["raw_available"] < 0:
+            if data["pool_shrunk"]:
                 st.warning(
                     f"⚠️ Pool has shrunk below launched count — "
                     f"{data['launched_count']:,} exported but only {data['whole_count']:,} "
