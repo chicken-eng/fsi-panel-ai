@@ -1,4 +1,4 @@
-# Vanna.AI Streamlit App
+# FSI AI Streamlit App
 <img width="1392" alt="Screenshot 2023-06-23 at 3 49 45 PM" src="./assets/vanna_demo.gif">
 
 # Install
