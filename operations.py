@@ -75,7 +75,6 @@ def extract_update_date_condition(sql: str) -> str | None:
 
 
 @st.cache_data(ttl=300, show_spinner="Calculating live sample metrics concurrently...")
-@st.cache_data(ttl=300, show_spinner="Calculating live sample metrics concurrently...")
 def calculate_project_metrics_cached(project_number):
     """
     Concurrently computes Whole, Launched, Available, Drifted, and Batch metrics
