@@ -640,9 +640,24 @@ def detect_export_request(question: str) -> tuple[bool, str | None, bool]:
 
     return is_export, project_number, is_override
 
+def extract_and_strip_limit(sql: str) -> tuple[str, int | None]:
+    """
+    Detects a trailing LIMIT n clause, strips it, and returns the cleaned SQL
+    together with the limit value (None if no LIMIT was present). Used to move
+    LIMIT from the inner query to the outer export-exclusion wrapper so the cap
+    applies AFTER previously-exported emails are excluded, not before.
+    """
+    cleaned = sql.strip().rstrip(';').strip()
+    match = _TRAILING_LIMIT_RE.search(cleaned)
+    if match:
+        limit_value = int(match.group(1))
+        cleaned = _TRAILING_LIMIT_RE.sub('', cleaned).strip()
+        return cleaned, limit_value
+    return cleaned, None
 
 def add_export_exclusion_to_sql(sql: str, project_number: str) -> str:
-    cleaned_sql = sql.rstrip(';').rstrip()
+    cleaned_sql, limit_value = extract_and_strip_limit(sql)
+
     wrapped_sql = (
         f"SELECT * FROM (\n"
         f"    {cleaned_sql}\n"
@@ -652,6 +667,10 @@ def add_export_exclusion_to_sql(sql: str, project_number: str) -> str:
         f"    WHERE project_number = '{project_number.lower()}'\n"
         f")"
     )
+
+    if limit_value is not None:
+        wrapped_sql += f"\nLIMIT {limit_value}"
+
     return wrapped_sql
 
 
@@ -768,6 +787,9 @@ def compute_filter_fingerprint(sql: str) -> str:
     base_no_order = re.sub(
         r'\bORDER\s+BY\b.*$', '', base_sql, flags=re.DOTALL | re.IGNORECASE
     ).strip()
+    base_no_order = re.sub(                                           
+    r'\bLIMIT\s+\d+\s*;?\s*$', '', base_no_order, flags=re.IGNORECASE
+    ).strip() 
 
     # Extract the WHERE clause body
     where_match = re.search(r'\bWHERE\b(.+)$', base_no_order, re.DOTALL | re.IGNORECASE)
