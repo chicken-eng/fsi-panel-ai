@@ -130,6 +130,9 @@ def compute_filter_fingerprint(sql: str) -> str:
     base_no_order = re.sub(
         r'\bORDER\s+BY\b.*$', '', base_sql, flags=re.DOTALL | re.IGNORECASE
     ).strip()
+    base_no_order = re.sub(                                            # ← NEW
+    r'\bLIMIT\s+\d+\s*;?\s*$', '', base_no_order, flags=re.IGNORECASE
+    ).strip()
 
     # Extract the WHERE clause body
     where_match = re.search(r'\bWHERE\b(.+)$', base_no_order, re.DOTALL | re.IGNORECASE)
