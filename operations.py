@@ -324,32 +324,12 @@ def show_operations_page():
 
     st.subheader("New respondents per project")
 
-    query2 = """WITH first_seen AS (
-                   SELECT 
-                       email,
-                       MIN(created_date) AS first_created_date
-                   FROM respondent_type_specification
-                   GROUP BY email
-                   HAVING MIN(created_date) >= DATE '2026-01-01'
-                )
-            
-                SELECT
-                    COALESCE(p.project_number::text, 'TOTAL') AS project_number,
-                    COALESCE(p.project_name, 'TOTAL') AS project_name,
-                    COUNT(DISTINCT fs.email) AS new_respondents
-                FROM first_seen fs
-                JOIN project_respondent pr
-                   ON pr.email = fs.email
-                   AND pr.last_activity_date = fs.first_created_date
-                JOIN projects p
-                   ON p.project_number = pr.project_number
-                GROUP BY ROLLUP (
-                    p.project_number,
-                    p.project_name
-                 )
-                 ORDER BY
-                     CASE WHEN p.project_number IS NULL THEN 1 ELSE 0 END,
-                     new_respondents DESC;
+    query2 = """select p.project_number, p.project_name, count(distinct(r.email)) as total
+                from respondent r
+                join project_respondent pr on r.email = pr.email
+                join projects p on pr.project_number = p.project_number
+                where r.source_project is not null
+                group by p.project_number
     """
 
     try:
