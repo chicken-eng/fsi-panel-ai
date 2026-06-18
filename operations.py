@@ -324,12 +324,13 @@ def show_operations_page():
 
     st.subheader("New respondents per project")
 
-    query2 = """select p.project_number, p.project_name, count(distinct(r.email)) as total
+    query2 = """select to_char(p.end_date, 'FMMonth FMDD, YYYY') AS closed_date, p.project_number, p.project_name, count(distinct(r.email)) as total
                 from respondent r
                 join project_respondent pr on r.email = pr.email
                 join projects p on pr.project_number = p.project_number
                 where r.source_project is not null
                 group by p.project_number
+                order by total desc
     """
 
     try:
