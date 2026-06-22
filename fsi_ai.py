@@ -640,6 +640,8 @@ def detect_export_request(question: str) -> tuple[bool, str | None, bool]:
 
     return is_export, project_number, is_override
 
+_TRAILING_LIMIT_RE = re.compile(r'(?i)\s+LIMIT\s+(\d+)\s*$')
+
 def extract_and_strip_limit(sql: str) -> tuple[str, int | None]:
     """
     Detects a trailing LIMIT n clause, strips it, and returns the cleaned SQL
