@@ -43,8 +43,8 @@ SEMANTIC TRANSLATION GLOSSARY (Mappings for human terms to database elements):
    - Map clinical sub-domains, specialties, or medical topics (e.g., 'Oncology') to HCP specialties using the respondent_hcp_specialty and hcp_job_specialty tables.
 
 4. TIMESTAMPS & LIFE CYCLE DATES:
-   - Baseline creation, registration, or initial appearance queries: Filter using the `created_date` column in the `respondent_type_specification` table. Grouped entities with multiple type associations must resolve to the oldest baseline date via MIN().
-   - Last active or interaction queries: Filter using the `update_date` column in the `respondent_type_specification` table. Grouped entities with multiple type associations must resolve to the newest interaction date via MAX().
+   - Baseline creation, registration, or initial appearance queries: Filter using the `created_date` column in the `respondent` table. Grouped entities with multiple type associations must resolve to the oldest baseline date via MIN().
+   - Last active or interaction queries: Filter using the `update_date` column in the `respondent` table. Grouped entities with multiple type associations must resolve to the newest interaction date via MAX().
    - Specific project interaction timelines: Filter using the `last_activity_date` column in the `project_respondent` table.
 
 5. PROJECT PARTICIPATION:
