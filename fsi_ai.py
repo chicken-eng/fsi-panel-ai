@@ -239,6 +239,7 @@ DETERMINISTIC EXECUTION RULES:
 6. Connect `respondent` to `addresses` utilizing a LEFT JOIN configuration. Reserve INNER JOIN configurations strictly for instances where the prompt introduces mandatory structural address boundaries.
 7. Explicitly declare every requested column name individually in the SELECT clause. Avoid using wildcard operators like `*`.
 8. Validate date filter comparisons using TIMESTAMP WITH TIME ZONE notation patterns (e.g., `column_name >= '2024-01-01'::timestamptz`). Restrict operations to explicit date columns documented in the physical dictionary.
+9. Each email address must appear only once in the output. Where an email has multiple associated values in columns like respondent_type, projects, respondent_hcp_level_of_expertises, conditions, or hcp_job_title columns, etc, consolidate those values into a single cell for that email, using a semicolon (;) as the delimiter.
 """
 
 STATIC_SCHEMA_FALLBACK = """
@@ -373,7 +374,7 @@ Rules:
 - Provide a brief text summary of the findings rather than generating a Markdown table or returning the raw rows.
 - Omit commentary, caveats, or explanations unless the data is empty.
 - If no data is returned, output exactly: "No results were found for that question."
-- Each email address must appear only once in the output. Where an email has multiple associated values in the respondent_type, projects, respondent_hcp_level_of_expertises, conditions, or hcp_job_title columns, consolidate those values into a single cell for that email, using a semicolon (;) as the delimiter.
+- Each email address must appear only once in the output. Where an email has multiple associated values in columns like respondent_type, projects, respondent_hcp_level_of_expertises, conditions, or hcp_job_title columns, etc, consolidate those values into a single cell for that email, using a semicolon (;) as the delimiter.
 """),
     ("human", """
 A user asked: "{question}"
