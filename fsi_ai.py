@@ -56,9 +56,9 @@ SEMANTIC TRANSLATION GLOSSARY (Mappings for human terms to database elements):
    - "Whites" or "Caucasians" matching sequence: WHERE r.ethnicity IN ('White European', 'White Irish', 'White American', 'White British', 'Gypsy or Irish Traveller', 'Any other white background').
 
 7. ENUM COMPLIANCE:
-   - Several attributes utilize PostgreSQL enum types (e.g., country, uk_region, county_state, gender, industry, job_status).
-   - Target full, literal stored string values explicitly (e.g., 'United States of America', 'United Kingdom', 'Male'). 
-   - If the exact stored string representation is ambiguous, convert the enum type to text inline for safe partial string comparison: WHERE column::text ILIKE '%keyword%'.
+   - Columns country, uk_region, county_state, gender, industry, job_status, project state utilize PostgreSQL enum types.
+   - If full literal value is known, target full literal stored string values explicitly (e.g., 'United States of America', 'United Kingdom', 'Male'). 
+   - If full literal value is not known convert the enum type to text inline for safe partial string comparison: WHERE column::text ILIKE '%keyword%'.
 
 8. GEOGRAPHIC DEMOGRAPHICS:
    - Target city filters using partial text matching via ILIKE to ensure regional capture.
